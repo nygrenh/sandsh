@@ -15,6 +15,14 @@
 pipx install .
 ```
 
+## Development Setup
+
+After cloning the repository:
+
+```bash
+uv run pre-commit install  # Install pre-commit hooks
+```
+
 ## Usage
 
 ```bash
