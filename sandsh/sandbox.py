@@ -130,7 +130,7 @@ def build_bind_args(
         # Try to create a seccomp filter with all specified rules
         temp_dir, filter_path = create_seccomp_filter(config)
         if filter_path:
-            log("Using seccomp filter with custom rules")
+            pass
         else:
             log("Warning: Failed to create seccomp filter, terminal protection is reduced")
             log("         Consider enabling new_session=true in your config for better security")
@@ -422,7 +422,9 @@ def launch(config: FinalizedSandboxConfig, project_dir: Path) -> None:
 
     args, seccomp_filter_path = build_bind_args(config, project_dir, sandbox_home)
 
-    log(f"Launching sandboxed shell: {config.shell}")
+    # Print the command in purple with > prefix
+    cmd = ["bwrap"] + args + [config.shell]
+    print("\033[35m> " + " ".join(cmd) + "\033[0m")
 
     # If we have a seccomp filter, use it with fd redirection
     if seccomp_filter_path and os.path.exists(seccomp_filter_path):

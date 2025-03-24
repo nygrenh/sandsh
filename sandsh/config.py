@@ -393,7 +393,6 @@ def load_local_config(project_dir: Path) -> SandboxConfig:
     while True:
         path = current_dir / CONFIG_FILENAME
         if path.exists():
-            log(f"Found local config at {path}")
             raw = load_toml(path)
             # Extract the sandbox section
             sandbox_config = raw.get("sandbox", {})
@@ -426,7 +425,6 @@ def load_global_config() -> GlobalConfig:
     if not global_config.profiles:
         fail("Global config must contain at least one profile")
 
-    log(f"Loaded global config from {GLOBAL_CONFIG_PATH}")
     return global_config
 
 
