@@ -30,7 +30,7 @@ class SandboxConfig:
     profile: str | None = None
     shell: str | None = None
     bind_mounts: list[BindMount] = field(default_factory=list)
-    new_session: bool = True  # Create a new terminal session for security
+    new_session: bool = False  # Default to false to avoid TTY issues
     die_with_parent: bool = True  # Kill sandbox when parent process dies
     network_enabled: bool = True  # By default we enable network
     disable_userns: bool = True  # Prevent creation of new user namespaces (security)
@@ -39,6 +39,7 @@ class SandboxConfig:
     sandbox_gid: int | None = None  # Custom GID in sandbox (None = keep current)
     hostname: str | None = None  # Custom hostname in sandbox
     unshare_cgroup: bool = True  # Use cgroup namespace isolation
+    use_tiocsti_protection: bool = True  # Whether to protect against TIOCSTI
 
 
 @dataclass
@@ -54,7 +55,7 @@ class MergedSandboxConfig:
     shell: str
     profile: str | None = None
     bind_mounts: list[BindMount] = field(default_factory=list)
-    new_session: bool = True
+    new_session: bool = False
     die_with_parent: bool = True
     network_enabled: bool = True
     disable_userns: bool = True
@@ -63,6 +64,7 @@ class MergedSandboxConfig:
     sandbox_gid: int | None = None
     hostname: str | None = None
     unshare_cgroup: bool = True
+    use_tiocsti_protection: bool = True
 
 
 def load_toml(path: Path) -> dict:
@@ -120,6 +122,7 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> MergedSand
             sandbox_gid=local.sandbox_gid,
             hostname=local.hostname,
             unshare_cgroup=local.unshare_cgroup,
+            use_tiocsti_protection=local.use_tiocsti_protection,
         )
 
     shell = local.shell or global_conf.shell
@@ -138,4 +141,5 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> MergedSand
         sandbox_gid=local.sandbox_gid,
         hostname=local.hostname,
         unshare_cgroup=local.unshare_cgroup,
+        use_tiocsti_protection=local.use_tiocsti_protection,
     )

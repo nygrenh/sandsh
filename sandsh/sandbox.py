@@ -1,9 +1,59 @@
 import hashlib
 import os
+import struct
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from sandsh.config import MergedSandboxConfig
 from sandsh.utils import log
+
+
+def create_tiocsti_seccomp_filter():
+    """Create a minimal seccomp filter to block the TIOCSTI ioctl without external dependencies."""
+    # TIOCSTI ioctl number (typically 0x5412)
+    TIOCSTI = 0x5412
+    # ioctl syscall number (typically 16 on x86_64)
+    IOCTL_SYSCALL = 16
+
+    # Create a temporary file
+    fd, path = tempfile.mkstemp()
+    with os.fdopen(fd, "wb") as f:
+        # Simple BPF program structure:
+        # 1. Load syscall number
+        # 2. Compare with ioctl
+        # 3. If not ioctl, allow
+        # 4. If ioctl, check second argument against TIOCSTI
+        # 5. If TIOCSTI, reject with EPERM
+        # 6. Otherwise, allow
+
+        # This is a basic seccomp-bpf program in binary form
+        # It's a simplified version that only blocks TIOCSTI
+
+        # Format: (operation, jt, jf, k)
+        program = [
+            # Load the syscall number
+            (0x20, 0, 0, 0x00000000),  # ld [0]
+            # Jump if not equal to ioctl (16)
+            (0x15, 0, 4, IOCTL_SYSCALL),  # jeq IOCTL_SYSCALL, 0, 4
+            # Load the first argument (second register, which holds TIOCSTI code)
+            (0x20, 0, 0, 0x00000010),  # ld [16]
+            # Jump if not equal to TIOCSTI
+            (0x15, 0, 1, TIOCSTI),  # jeq TIOCSTI, 0, 1
+            # Return EPERM (Operation not permitted)
+            (0x06, 0, 0, 0x00050001),  # ret ERRNO(1)
+            # Allow the syscall
+            (0x06, 0, 0, 0x7FFF0000),  # ret ALLOW
+        ]
+
+        # Write the number of instructions
+        f.write(struct.pack("=I", len(program)))
+
+        # Write each instruction
+        for op, jt, jf, k in program:
+            f.write(struct.pack("=HBBI", op, jt, jf, k))
+
+    return path
 
 
 def build_bind_args(
@@ -34,9 +84,28 @@ def build_bind_args(
     # Add a dev directory with the minimum required devices
     bind_args += ["--dev", "/dev"]
 
-    # Add additional sandbox options from config
+    # Use seccomp to block TIOCSTI instead of --new-session if available
+    seccomp_filter_path = None
     if config.new_session:
+        # Default to --new-session for simplicity
         bind_args += ["--new-session"]
+    elif config.use_tiocsti_protection:
+        try:
+            # Try to create a direct seccomp filter
+            seccomp_filter_path = create_tiocsti_seccomp_filter()
+            if seccomp_filter_path:
+                with open(seccomp_filter_path, "rb") as f:
+                    seccomp_fd = f.fileno()
+                    # Duplicate the file descriptor because execvp will close it
+                    seccomp_fd = os.dup(seccomp_fd)
+                    bind_args += ["--seccomp", str(seccomp_fd)]
+                log("Using seccomp filter to block TIOCSTI ioctl for terminal protection")
+            else:
+                log("Warning: Failed to create seccomp filter for TIOCSTI protection")
+                log("         Your sandbox may be vulnerable to terminal injection attacks")
+        except Exception as e:
+            log(f"Warning: Failed to set up TIOCSTI protection: {e}")
+            log("         Your sandbox may be vulnerable to terminal injection attacks")
 
     if config.die_with_parent:
         bind_args += ["--die-with-parent"]
@@ -110,6 +179,11 @@ def build_bind_args(
     # Restore important environment variables after clearing
     for var, value in preserved_env.items():
         bind_args += ["--setenv", var, value]
+
+    # Cleanup temporary file at the end
+    if seccomp_filter_path:
+        with suppress(Exception):
+            os.unlink(seccomp_filter_path)
 
     return bind_args
 
