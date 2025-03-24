@@ -289,9 +289,6 @@ class FinalizedSandboxConfig:
 
 def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
     """Parse a dataclass from a dictionary, handling nested dataclasses correctly."""
-    if not is_dataclass(cls):
-        raise TypeError(f"Expected dataclass, got {cls}")
-
     kwargs = {}
     for f in fields(cls):
         if f.name not in data:
@@ -300,41 +297,30 @@ def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
         value = data[f.name]
         field_type = f.type
 
-        # Handle nested dataclasses
-        if isinstance(value, dict):
-            # Check if field_type is actually a dataclass type
-            if is_dataclass(field_type):
-                if not isinstance(field_type, type):
-                    field_type = type(field_type)
-                # Use cast to satisfy the type checker
-                kwargs[f.name] = parse_dataclass_from_dict(cast(type[T], field_type), value)
-            else:
-                kwargs[f.name] = value
-        # Handle lists
-        elif isinstance(value, list):
+        if isinstance(value, dict) and is_dataclass(field_type):
+            if not isinstance(field_type, type):
+                field_type = type(field_type)
+            kwargs[f.name] = parse_dataclass_from_dict(cast(type[T], field_type), value)
+            continue
+
+        if isinstance(value, list):
             origin = get_origin(field_type)
             args = get_args(field_type)
 
             if origin is list and args and len(args) > 0:
                 item_type = args[0]
-                # Check if item_type is a dataclass and the values are dictionaries
                 if is_dataclass(item_type) and all(isinstance(item, dict) for item in value):
                     parsed_items = []
                     for item in value:
-                        # Ensure item_type is a class, not an instance
                         if not isinstance(item_type, type):
                             item_type = type(item_type)
-                        # Use cast to satisfy the type checker
                         parsed_items.append(
                             parse_dataclass_from_dict(cast(type[T], item_type), item)
                         )
                     kwargs[f.name] = parsed_items
-                else:
-                    kwargs[f.name] = value
-            else:
-                kwargs[f.name] = value
-        else:
-            kwargs[f.name] = value
+                    continue
+
+        kwargs[f.name] = value
 
     return cls(**kwargs)
 
