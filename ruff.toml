@@ -1,0 +1,21 @@
+line-length = 100
+target-version = "py311"
+
+[lint.isort]
+known-first-party = ["sandsh"]
+
+[lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]

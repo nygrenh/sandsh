@@ -1,0 +1,9 @@
+[project]
+name = "sandsh"
+version = "0.0.0"
+description = "Helper for launching sandboxed shells that are unique and configurable for certain subfolders"
+authors = [{ name = "Henrik Nygren", email = "nygrenh@gmail.com" }]
+requires-python = ">=3.11"
+
+[project.scripts]
+sandsh = "sandsh.cli:main"
