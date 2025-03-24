@@ -112,36 +112,99 @@ The configuration system uses two types of files:
    set_vars = { DEBUG = "1" }
    ```
 
-### Configuration Sections
+### Configuration Options
 
-- **namespaces**: Control Linux namespace isolation
+#### Basic Settings
 
-  - `unshare_all`: Enable all namespace isolation
-  - `network`, `user`, `ipc`, `pid`, `uts`, `cgroup`: Individual namespace controls
-  - `uid`, `gid`: Custom user/group IDs
-  - `hostname`: Custom hostname
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `shell` | string | `/bin/bash` | Shell to launch in the sandbox |
+| `profile` | string | `default` | Profile name to use from global config |
 
-- **filesystem**: Configure filesystem mounts
+#### Namespace Options (`namespaces` section)
 
-  - `system_mounts`: Enable standard system mounts
-  - `system_ro`: Mount system directories as read-only
-  - `bind_mounts`: List of bind mounts
-  - `dev_mounts`, `proc_mounts`: Special filesystem mounts
-  - `tmpfs_mounts`: Temporary filesystems
-  - `overlay_mounts`: Overlay filesystem configurations
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `unshare_all` | bool | `true` | Enable all namespace isolation |
+| `user` | bool | `true` | Enable user namespace |
+| `user_try` | bool | `false` | Try to enable user namespace |
+| `ipc` | bool | `true` | Enable IPC namespace |
+| `pid` | bool | `true` | Enable PID namespace |
+| `network` | bool | `false` | Enable network namespace |
+| `uts` | bool | `true` | Enable UTS namespace |
+| `cgroup` | bool | `true` | Enable cgroup namespace |
+| `cgroup_try` | bool | `false` | Try to enable cgroup namespace |
+| `disable_userns` | bool | `false` | Disable user namespace support |
+| `share_net` | bool | `false` | Share network when unshare_all is true |
+| `uid` | int | `null` | Custom UID in the sandbox |
+| `gid` | int | `null` | Custom GID in the sandbox |
+| `hostname` | string | `null` | Custom hostname in the sandbox |
 
-- **environment**: Environment and process settings
+#### Filesystem Options (`filesystem` section)
 
-  - `clear_env`: Start with clean environment
-  - `preserve_vars`: Environment variables to preserve
-  - `set_vars`: Variables to set
-  - `unset_vars`: Variables to unset
-  - `new_session`, `die_with_parent`, `as_pid_1`: Process control options
+| Option | Type | Description |
+|--------|------|-------------|
+| `bind_mounts` | list | List of bind mount configurations |
+| `dev_mounts` | list | List of device mount points |
+| `proc_mounts` | list | List of procfs mount points |
+| `tmpfs_mounts` | list | List of tmpfs mount configurations |
+| `mqueue_mounts` | list | List of message queue mount points |
+| `overlay_mounts` | list | List of overlay mount configurations |
+| `remount_ro` | list | Paths to remount as read-only |
 
-- **security**: Security settings
-  - `capabilities`: Linux capabilities configuration
-  - `seccomp`: System call filtering
-  - `selinux`: SELinux context settings
+##### Bind Mount Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `source` | string | - | Source path to mount |
+| `dest` | string | - | Destination path in sandbox |
+| `mode` | string | `"rw"` | Mount mode (`"ro"` or `"rw"`) |
+| `create_dest` | bool | `true` | Create destination directory if missing |
+
+##### Tmpfs Mount Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `dest` | string | - | Mount point in sandbox |
+| `size` | int | `null` | Size in bytes |
+| `mode` | int | `null` | Permission mode (octal) |
+
+#### Environment Options (`environment` section)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `clear_env` | bool | `true` | Start with clean environment |
+| `preserve_vars` | list | `[]` | Environment variables to preserve |
+| `set_vars` | dict | `{}` | Variables to set |
+| `unset_vars` | list | `[]` | Variables to unset |
+| `new_session` | bool | `false` | Create new terminal session |
+| `die_with_parent` | bool | `true` | Kill sandbox when parent dies |
+| `as_pid_1` | bool | `false` | Run shell as PID 1 |
+
+#### Security Options (`security` section)
+
+##### Capabilities (`security.capabilities`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `drop_all` | bool | `false` | Drop all capabilities |
+| `add` | list | `[]` | Capabilities to add |
+| `drop` | list | `[]` | Capabilities to drop |
+
+##### Seccomp (`security.seccomp`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `use_tiocsti_protection` | bool | `true` | Enable TIOCSTI protection |
+| `syscall_rules` | list | `[]` | Syscall filtering rules |
+| `custom_filter_path` | string | `null` | Path to custom seccomp filter |
+
+##### SELinux (`security.selinux`)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `exec_label` | string | `null` | SELinux exec context |
+| `file_label` | string | `null` | SELinux file context |
 
 ## Usage
 
