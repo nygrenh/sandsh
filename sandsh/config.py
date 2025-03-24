@@ -26,6 +26,41 @@ class BindMount:
 
 
 @dataclass
+class SeccompSyscallRule:
+    """Rule for filtering syscalls using seccomp.
+
+    Examples:
+        Block a syscall completely:
+            { syscall = "unshare" }
+
+        Block mkdir with specific permissions:
+            { syscall = "mkdir", arg_index = 1, arg_value = 0o777 }
+
+        Log all uses of a syscall:
+            { syscall = "execve", action = "log" }
+    """
+
+    syscall: str  # Name of the syscall to filter
+    action: str = "block"  # "block", "allow", "log", "trace"
+    arg_index: int | None = None  # Argument index to check (0-5)
+    arg_value: int | None = None  # Value to compare with
+    arg_op: str | None = "eq"  # Comparison operation ("eq", "ne", "gt", "lt", etc.)
+
+    def __post_init__(self):
+        valid_actions = ["block", "allow", "log", "trace"]
+        if self.action not in valid_actions:
+            fail(f"Invalid action '{self.action}' in seccomp rule. Valid actions: {valid_actions}")
+
+        if (self.arg_index is not None) != (self.arg_value is not None):
+            fail(
+                f"Both arg_index and arg_value must be specified together in seccomp rule for {self.syscall}"
+            )
+
+        if self.arg_index is not None and not (0 <= self.arg_index <= 5):
+            fail(f"arg_index must be between 0 and 5, got {self.arg_index}")
+
+
+@dataclass
 class SandboxConfig:
     profile: str | None = None
     shell: str | None = None
@@ -40,6 +75,10 @@ class SandboxConfig:
     hostname: str | None = None  # Custom hostname in sandbox
     unshare_cgroup: bool = True  # Use cgroup namespace isolation
     use_tiocsti_protection: bool = True  # Whether to protect against TIOCSTI
+    seccomp_syscall_rules: list[SeccompSyscallRule] = field(
+        default_factory=list
+    )  # Rules for filtering syscalls
+    custom_seccomp_filter: str | None = None  # Path to a pre-compiled seccomp BPF filter file
 
 
 @dataclass
