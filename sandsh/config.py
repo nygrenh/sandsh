@@ -35,19 +35,21 @@ DEFAULT_BIND_MOUNTS = [
     {"source": "/run", "dest": "/run", "mode": "ro"},
 ]
 
-DEFAULT_CONFIG = {
-    "default": {
-        "shell": "/bin/bash",
-        "bind_mounts": DEFAULT_BIND_MOUNTS,
-        "network_enabled": True,
-        "clear_env": True,
-        "die_with_parent": True,
-        "disable_userns": True,
-        "unshare_cgroup": True,
-        "use_tiocsti_protection": True,
-    },
+# Replace DEFAULT_CONFIG with separate configs for global and local
+DEFAULT_GLOBAL_CONFIG = {
     "profiles": {
+        "default": {
+            "shell": "/bin/bash",
+            "bind_mounts": DEFAULT_BIND_MOUNTS,
+            "network_enabled": True,
+            "clear_env": True,
+            "die_with_parent": True,
+            "disable_userns": True,
+            "unshare_cgroup": True,
+            "use_tiocsti_protection": True,
+        },
         "restricted": {
+            "shell": "/bin/bash",
             "network_enabled": False,
             "new_session": True,
             "bind_mounts": [
@@ -57,9 +59,16 @@ DEFAULT_CONFIG = {
                 {"source": "/lib", "dest": "/lib", "mode": "ro"},
                 {"source": "/lib64", "dest": "/lib64", "mode": "ro"},
             ],
-        }
-    },
+            "clear_env": True,
+            "die_with_parent": True,
+            "disable_userns": True,
+            "unshare_cgroup": True,
+            "use_tiocsti_protection": True,
+        },
+    }
 }
+
+DEFAULT_LOCAL_CONFIG = {"profile": "default"}
 
 
 @dataclass
@@ -203,33 +212,60 @@ def load_toml(path: Path) -> dict[str, Any]:
         fail(f"Failed to parse {path.name}: {e}")
 
 
-def load_local_config(project_dir: Path) -> SandboxConfig:
-    """Load local sandbox configuration from the project directory."""
-    path = project_dir / CONFIG_FILENAME
-    if not path.exists():
-        log(f"No local config found at {CONFIG_FILENAME}. Using defaults.")
-        return SandboxConfig()
+def load_local_config(project_dir: Path) -> SandboxConfig | None:
+    """Load local sandbox configuration from the project directory or any parent directory.
 
-    raw = load_toml(path)
-    return parse_dataclass_from_dict(SandboxConfig, raw)
+    Returns None if no config file is found.
+    """
+    # Start with the project directory
+    current_dir = project_dir
+
+    # Check the current directory and all parent directories
+    # until we find a config file or reach the filesystem root
+    while True:
+        path = current_dir / CONFIG_FILENAME
+        if path.exists():
+            log(f"Found local config at {path}")
+            raw = load_toml(path)
+            return parse_dataclass_from_dict(SandboxConfig, raw)
+
+        # Move to parent directory
+        parent_dir = current_dir.parent
+
+        # Stop if we've reached the filesystem root
+        if parent_dir == current_dir:
+            break
+
+        current_dir = parent_dir
+
+    # No config file found in the directory hierarchy
+    return None
 
 
 def load_global_config() -> GlobalConfig:
-    """Load the global configuration with default settings and profiles."""
+    """Load the global configuration with profiles."""
     if not GLOBAL_CONFIG_PATH.exists():
         log("No global config found. Using defaults.")
-        return GlobalConfig()
+        return GlobalConfig(
+            profiles={
+                "default": parse_dataclass_from_dict(
+                    SandboxConfig, DEFAULT_GLOBAL_CONFIG["profiles"]["default"]
+                ),
+                "restricted": parse_dataclass_from_dict(
+                    SandboxConfig, DEFAULT_GLOBAL_CONFIG["profiles"]["restricted"]
+                ),
+            }
+        )
 
     raw = load_toml(GLOBAL_CONFIG_PATH)
     global_config = GlobalConfig()
 
-    # Parse default configuration settings
-    if "default" in raw:
-        global_config.default_config = parse_dataclass_from_dict(SandboxConfig, raw["default"])
-
     # Parse profile configurations
     for name, conf in raw.get("profiles", {}).items():
         global_config.profiles[name] = parse_dataclass_from_dict(SandboxConfig, conf)
+
+    if not global_config.profiles:
+        fail("Global config must contain at least one profile")
 
     log(f"Loaded global config from {GLOBAL_CONFIG_PATH}")
     return global_config
@@ -264,40 +300,32 @@ def finalize_config(config: SandboxConfig) -> FinalizedSandboxConfig:
 
 
 def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedSandboxConfig:
-    """Merge configurations with precedence: local > profile > global defaults.
+    """Merge configurations with precedence: local > profile.
 
     Returns a fully merged FinalizedSandboxConfig with all necessary settings for running a sandbox.
     """
-    # Start with global defaults
-    merged = SandboxConfig(
-        **{
-            f.name: getattr(global_conf.default_config, f.name)
-            for f in fields(global_conf.default_config)
-        }
-    )
+    # Start with the default profile if no profile is specified
+    profile_name = local.profile or "default"
 
-    # Apply profile settings if specified
-    if local.profile:
-        profile = global_conf.profiles.get(local.profile)
-        if not profile:
-            fail(f"Profile '{local.profile}' not found in global config.")
+    # Check if the profile exists
+    if profile_name not in global_conf.profiles:
+        fail(f"Profile '{profile_name}' not found in global config.")
 
-        # Apply profile settings, only if they're not the default values
-        for f in fields(profile):
-            value = getattr(profile, f.name)
-            default_value = getattr(SandboxConfig(), f.name)
-
-            # Skip field if it's a default value (not explicitly set in profile)
-            if value != default_value or f.name == "profile":
-                setattr(merged, f.name, value)
+    # Start with the specified profile
+    profile = global_conf.profiles[profile_name]
+    merged = SandboxConfig(**{f.name: getattr(profile, f.name) for f in fields(profile)})
+    merged.profile = profile_name
 
     # Apply local settings, only if they're not the default values
     for f in fields(local):
+        if f.name == "profile":
+            continue  # We've already handled the profile
+
         value = getattr(local, f.name)
         default_value = getattr(SandboxConfig(), f.name)
 
         # Skip field if it's a default value (not explicitly set in local config)
-        if value != default_value or f.name == "profile":
+        if value != default_value:
             if f.name == "bind_mounts":
                 # Special handling for bind_mounts: we append rather than replace
                 setattr(merged, f.name, getattr(merged, f.name) + value)
@@ -309,7 +337,7 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedS
 
     # Validate required fields
     if not merged.shell:
-        fail("No shell specified in local, profile, or global config.")
+        fail("No shell specified in profile or local config.")
 
     # Convert to finalized config with non-optional fields
     return finalize_config(merged)
@@ -326,7 +354,11 @@ def write_default_config(path: Path) -> None:
     try:
         from sandsh import toml
 
-        path.write_text(toml.dumps(DEFAULT_CONFIG))
-        log(f"Created default config at {path}")
+        # Use different default configs for global and local
+        is_global = path == GLOBAL_CONFIG_PATH
+        default_config = DEFAULT_GLOBAL_CONFIG if is_global else DEFAULT_LOCAL_CONFIG
+
+        path.write_text(toml.dumps(default_config))
+        log(f"Created {'global' if is_global else 'local'} config at {path}")
     except Exception as e:
         fail(f"Failed to write config file: {e}")
