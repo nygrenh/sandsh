@@ -9,7 +9,7 @@ from sandsh.utils import log
 
 def build_bind_args(
     config: FinalizedSandboxConfig, project_dir: Path, sandbox_home: Path
-) -> list[str]:
+) -> tuple[list[str], str | None]:
     bind_args: list[str] = []
 
     # We always need to bind the project directory itself
@@ -40,7 +40,11 @@ def build_bind_args(
     if config.new_session:
         # If new_session is explicitly enabled, use it
         bind_args += ["--new-session"]
-    elif config.use_tiocsti_protection or config.seccomp_rules or config.seccomp_filter_path:
+    elif (
+        config.use_tiocsti_protection
+        or config.seccomp_syscall_rules
+        or config.custom_seccomp_filter
+    ):
         # Try to create a seccomp filter with all specified rules
         temp_dir, filter_path = create_seccomp_filter(config)
         if filter_path:
@@ -113,7 +117,7 @@ def build_bind_args(
         bind_args += ["--setenv", var, value]
 
     # Clean up temp files (now done in launch())
-    return bind_args, filter_path  # Return the filter path as well
+    return bind_args, filter_path
 
 
 def get_sandbox_home(project_dir: Path) -> Path:
@@ -158,8 +162,7 @@ def launch(config: FinalizedSandboxConfig, project_dir: Path) -> None:
 
     # If we have a seccomp filter, use it with fd redirection
     if seccomp_filter_path and os.path.exists(seccomp_filter_path):
-        # Use file descriptor 10 for the seccomp filter
-        args += ["--seccomp", "10"]
+        args.extend(["--seccomp", "10"])
 
         # Open the file and keep the FD
         seccomp_fd = os.open(seccomp_filter_path, os.O_RDONLY)
@@ -171,4 +174,5 @@ def launch(config: FinalizedSandboxConfig, project_dir: Path) -> None:
         os.execvp("bwrap", ["bwrap"] + args + [config.shell])
     else:
         # Regular launch without seccomp
-        os.execvp("bwrap", ["bwrap"] + args + [config.shell])
+        args.extend([config.shell])
+        os.execvp("bwrap", ["bwrap"] + args)

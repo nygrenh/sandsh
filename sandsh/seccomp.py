@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from contextlib import suppress
 
-from sandsh.config import MergedSandboxConfig
+from sandsh.config import FinalizedSandboxConfig
 from sandsh.utils import log
 
 
@@ -25,7 +25,7 @@ EOF
     return script_path
 
 
-def create_seccomp_filter(config: MergedSandboxConfig):
+def create_seccomp_filter(config: FinalizedSandboxConfig) -> tuple[str | None, str | None]:
     """Create a seccomp filter with custom rules from config"""
     temp_dir = tempfile.mkdtemp(prefix="sandsh_seccomp_")
     c_file_path = os.path.join(temp_dir, "seccomp_filter.c")
@@ -33,12 +33,12 @@ def create_seccomp_filter(config: MergedSandboxConfig):
     filter_path = os.path.join(temp_dir, "seccomp.bpf")
 
     # If a custom filter path is provided, just use that
-    if config.seccomp_filter_path:
-        if os.path.exists(config.seccomp_filter_path):
-            return None, config.seccomp_filter_path
+    if config.custom_seccomp_filter:
+        if os.path.exists(config.custom_seccomp_filter):
+            return None, config.custom_seccomp_filter
         else:
             log(
-                f"Warning: Specified seccomp filter path {config.seccomp_filter_path} does not exist"
+                f"Warning: Specified seccomp filter path {config.custom_seccomp_filter} does not exist"
             )
 
     # Generate C code for the seccomp filter
@@ -52,20 +52,17 @@ def create_seccomp_filter(config: MergedSandboxConfig):
         rule_lines.append("                    SCMP_CMP(1, SCMP_CMP_EQ, 0x5412));")
 
     # Add custom rules from config
-    for rule in config.seccomp_rules:
+    for rule in config.seccomp_syscall_rules:
         syscall = rule.syscall
 
         # Convert rule.action to SCMP_ACT constant
-        if rule.action == "block":
-            action = "SCMP_ACT_ERRNO(1)"
-        elif rule.action == "allow":
-            action = "SCMP_ACT_ALLOW"
-        elif rule.action == "log":
-            action = "SCMP_ACT_LOG"
-        elif rule.action == "trace":
-            action = "SCMP_ACT_TRACE(1)"
-        else:
-            action = "SCMP_ACT_ERRNO(1)"  # Default to block
+        action_map: dict[str, str] = {
+            "block": "SCMP_ACT_ERRNO(1)",
+            "allow": "SCMP_ACT_ALLOW",
+            "log": "SCMP_ACT_LOG",
+            "trace": "SCMP_ACT_TRACE(1)",
+        }
+        action = action_map.get(rule.action or "block", "SCMP_ACT_ERRNO(1)")
 
         # Handle rules with and without arguments
         if rule.arg_index is not None and rule.arg_value is not None:
@@ -79,7 +76,8 @@ def create_seccomp_filter(config: MergedSandboxConfig):
                 "ge": "SCMP_CMP_GE",
                 "maskeq": "SCMP_CMP_MASKED_EQ",
             }
-            op_str = op_map.get(rule.arg_op, "SCMP_CMP_EQ")
+            # Use a default of "eq" if arg_op is None
+            op_str = op_map.get(rule.arg_op or "eq", "SCMP_CMP_EQ")
 
             rule_lines.append(f"    // Custom rule for {syscall}")
             rule_lines.append(f"    seccomp_rule_add(ctx, {action}, SCMP_SYS({syscall}), 1,")

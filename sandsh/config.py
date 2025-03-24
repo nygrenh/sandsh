@@ -1,6 +1,6 @@
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ClassVar, Protocol, TypeVar
 
 from sandsh.utils import fail, log
 
@@ -13,7 +13,14 @@ except ImportError:
 CONFIG_FILENAME = ".sandshrc.toml"
 GLOBAL_CONFIG_PATH = Path.home() / ".config" / "sandsh" / "config.toml"
 
-T = TypeVar("T")
+
+# Define a Protocol for dataclass instances
+class DataclassProtocol(Protocol):
+    # This matches Python's internal dataclass structure
+    __dataclass_fields__: ClassVar[dict[str, Any]]
+
+
+T = TypeVar("T", bound=DataclassProtocol)
 
 # Add near the top with other constants
 DEFAULT_BIND_MOUNTS = [
@@ -143,36 +150,33 @@ class GlobalConfig:
 
 @dataclass
 class FinalizedSandboxConfig:
-    """Configuration with guaranteed non-optional values after merging.
-
-    This class represents the final, fully-resolved configuration with
-    non-optional fields where appropriate. This makes the configuration
-    safer to use throughout the codebase by reducing null checks.
-    """
+    """Configuration with guaranteed non-optional values after merging."""
 
     shell: str  # Shell is required and validated during merging
     profile: str | None = None  # Profile remains optional
     bind_mounts: list[BindMount] = field(default_factory=list)
-    new_session: bool = False  # Set to true for better security but may have TTY issues
-    die_with_parent: bool = True  # Kill sandbox when parent process dies
-    network_enabled: bool = True  # By default we enable network
-    disable_userns: bool = True  # Prevent creation of new user namespaces (security)
-    clear_env: bool = True  # Start with clean environment
-    sandbox_uid: int | None = None  # These remain optional because they might not be set
+    new_session: bool = False
+    die_with_parent: bool = True
+    network_enabled: bool = True
+    disable_userns: bool = True
+    clear_env: bool = True
+    sandbox_uid: int | None = None
     sandbox_gid: int | None = None
     hostname: str | None = None
-    unshare_cgroup: bool = True  # Use cgroup namespace isolation
-    use_tiocsti_protection: bool = True  # Whether to protect against TIOCSTI
-    seccomp_syscall_rules: list[SeccompSyscallRule] = field(
-        default_factory=list
-    )  # Rules for filtering syscalls
-    custom_seccomp_filter: str | None = None  # Remains optional
+    unshare_cgroup: bool = True
+    use_tiocsti_protection: bool = True
+    seccomp_syscall_rules: list[SeccompSyscallRule] = field(default_factory=list)
+    custom_seccomp_filter: str | None = None
+    seccomp_filter_path: str | None = None  # Add this field
+    seccomp_rules: list[SeccompSyscallRule] = field(default_factory=list)  # Add this field
 
 
 def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
     """Parse a dataclass from a dictionary, handling nested dataclasses correctly."""
-    kwargs = {}
+    if not is_dataclass(cls):
+        raise TypeError(f"Expected dataclass, got {cls}")
 
+    kwargs = {}
     for f in fields(cls):
         if f.name not in data:
             continue
@@ -187,7 +191,7 @@ def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
         else:
             kwargs[f.name] = value
 
-    return cls(**kwargs)
+    return cls(**kwargs)  # Remove cast since T is properly bound now
 
 
 def load_toml(path: Path) -> dict[str, Any]:
