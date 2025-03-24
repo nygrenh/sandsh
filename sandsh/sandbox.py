@@ -44,7 +44,14 @@ def build_bind_args(
     if config.disable_userns:
         bind_args += ["--disable-userns"]
 
+    # Save important environment variables before clearing
+    preserved_env = {}
     if config.clear_env:
+        important_vars = ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]
+        for var in important_vars:
+            if var in os.environ:
+                preserved_env[var] = os.environ[var]
+
         bind_args += ["--clearenv"]
 
     if config.unshare_cgroup:
@@ -87,7 +94,7 @@ def build_bind_args(
         str(project_dir),
     ]
 
-    # Only set environment variables after --clearenv if used
+    # Environment variables section
     bind_args += [
         "--setenv",
         "HOME",
@@ -99,6 +106,10 @@ def build_bind_args(
         "SHELL",
         config.shell,
     ]
+
+    # Restore important environment variables after clearing
+    for var, value in preserved_env.items():
+        bind_args += ["--setenv", var, value]
 
     return bind_args
 
