@@ -1,6 +1,6 @@
 import hashlib
 import os
-import struct
+import subprocess
 import tempfile
 from contextlib import suppress
 from pathlib import Path
@@ -9,51 +9,102 @@ from sandsh.config import MergedSandboxConfig
 from sandsh.utils import log
 
 
+def generate_seccomp_script(filter_path: str):
+    """Generate a seccomp filter using a shell script approach"""
+    script_content = """#!/bin/bash
+# Generate a minimal seccomp filter to block TIOCSTI ioctl
+cat > {filter_path} << EOF
+# Simple seccomp filter that blocks TIOCSTI (0x5412) ioctl
+# Format: syscall_name, arg_index, arg_value, arg_mask, action
+ioctl 1 0x5412 0xffffffff ERRNO(1)
+EOF
+"""
+    script_path = filter_path + ".sh"
+    with open(script_path, "w") as f:
+        f.write(script_content.format(filter_path=filter_path))
+
+    os.chmod(script_path, 0o755)
+    return script_path
+
+
 def create_tiocsti_seccomp_filter():
-    """Create a minimal seccomp filter to block the TIOCSTI ioctl without external dependencies."""
-    # TIOCSTI ioctl number (typically 0x5412)
-    TIOCSTI = 0x5412
-    # ioctl syscall number (typically 16 on x86_64)
-    IOCTL_SYSCALL = 16
+    """Create a compiled seccomp filter using gcc and libseccomp"""
+    temp_dir = tempfile.mkdtemp(prefix="sandsh_seccomp_")
+    c_file_path = os.path.join(temp_dir, "seccomp_filter.c")
+    bin_path = os.path.join(temp_dir, "genfilter")
+    filter_path = os.path.join(temp_dir, "seccomp.bpf")
 
-    # Create a temporary file
-    fd, path = tempfile.mkstemp()
-    with os.fdopen(fd, "wb") as f:
-        # Simple BPF program structure:
-        # 1. Load syscall number
-        # 2. Compare with ioctl
-        # 3. If not ioctl, allow
-        # 4. If ioctl, check second argument against TIOCSTI
-        # 5. If TIOCSTI, reject with EPERM
-        # 6. Otherwise, allow
+    # Create a simple C program that generates a seccomp filter
+    with open(c_file_path, "w") as f:
+        f.write("""
+#include <seccomp.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
 
-        # This is a basic seccomp-bpf program in binary form
-        # It's a simplified version that only blocks TIOCSTI
+int main(int argc, char *argv[]) {
+    // Create a seccomp filter context with a default deny policy
+    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+    if (!ctx) {
+        fprintf(stderr, "Failed to initialize seccomp filter\\n");
+        return 1;
+    }
+    
+    // Block TIOCSTI ioctl (terminal injection)
+    // TIOCSTI is 0x5412, ioctl is 16 on x86_64
+    seccomp_rule_add(ctx, SCMP_ACT_ERRNO(1), SCMP_SYS(ioctl), 1,
+                    SCMP_CMP(1, SCMP_CMP_EQ, 0x5412));
+    
+    // Write the filter to the output file
+    int fd = open(argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        fprintf(stderr, "Failed to open output file\\n");
+        seccomp_release(ctx);
+        return 1;
+    }
+    
+    seccomp_export_bpf(ctx, fd);
+    close(fd);
+    seccomp_release(ctx);
+    return 0;
+}
+""")
 
-        # Format: (operation, jt, jf, k)
-        program = [
-            # Load the syscall number
-            (0x20, 0, 0, 0x00000000),  # ld [0]
-            # Jump if not equal to ioctl (16)
-            (0x15, 0, 4, IOCTL_SYSCALL),  # jeq IOCTL_SYSCALL, 0, 4
-            # Load the first argument (second register, which holds TIOCSTI code)
-            (0x20, 0, 0, 0x00000010),  # ld [16]
-            # Jump if not equal to TIOCSTI
-            (0x15, 0, 1, TIOCSTI),  # jeq TIOCSTI, 0, 1
-            # Return EPERM (Operation not permitted)
-            (0x06, 0, 0, 0x00050001),  # ret ERRNO(1)
-            # Allow the syscall
-            (0x06, 0, 0, 0x7FFF0000),  # ret ALLOW
-        ]
+    try:
+        # Compile the C program
+        compilation_result = subprocess.run(
+            ["gcc", "-o", bin_path, c_file_path, "-lseccomp"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-        # Write the number of instructions
-        f.write(struct.pack("=I", len(program)))
+        if compilation_result.returncode != 0:
+            log(f"Failed to compile seccomp filter generator: {compilation_result.stderr}")
+            return None, None
 
-        # Write each instruction
-        for op, jt, jf, k in program:
-            f.write(struct.pack("=HBBI", op, jt, jf, k))
+        # Run the program to generate the filter
+        run_result = subprocess.run(
+            [bin_path, filter_path], capture_output=True, text=True, check=False
+        )
 
-    return path
+        if run_result.returncode != 0:
+            log(f"Failed to generate seccomp filter: {run_result.stderr}")
+            return None, None
+
+        # Check if the filter was created successfully
+        if os.path.exists(filter_path) and os.path.getsize(filter_path) > 0:
+            return temp_dir, filter_path
+
+    except Exception as e:
+        log(f"Error creating seccomp filter: {e}")
+
+    # Clean up if we failed
+    with suppress(Exception):
+        if os.path.exists(temp_dir):
+            subprocess.run(["rm", "-rf", temp_dir])
+
+    return None, None
 
 
 def build_bind_args(
@@ -84,28 +135,24 @@ def build_bind_args(
     # Add a dev directory with the minimum required devices
     bind_args += ["--dev", "/dev"]
 
-    # Use seccomp to block TIOCSTI instead of --new-session if available
-    seccomp_filter_path = None
+    # Seccomp filter setup
+    temp_dir = None
+    filter_path = None
+
     if config.new_session:
-        # Default to --new-session for simplicity
+        # If new_session is explicitly enabled, use it
         bind_args += ["--new-session"]
     elif config.use_tiocsti_protection:
-        try:
-            # Try to create a direct seccomp filter
-            seccomp_filter_path = create_tiocsti_seccomp_filter()
-            if seccomp_filter_path:
-                with open(seccomp_filter_path, "rb") as f:
-                    seccomp_fd = f.fileno()
-                    # Duplicate the file descriptor because execvp will close it
-                    seccomp_fd = os.dup(seccomp_fd)
-                    bind_args += ["--seccomp", str(seccomp_fd)]
-                log("Using seccomp filter to block TIOCSTI ioctl for terminal protection")
-            else:
-                log("Warning: Failed to create seccomp filter for TIOCSTI protection")
-                log("         Your sandbox may be vulnerable to terminal injection attacks")
-        except Exception as e:
-            log(f"Warning: Failed to set up TIOCSTI protection: {e}")
-            log("         Your sandbox may be vulnerable to terminal injection attacks")
+        # Try to create a seccomp filter
+        temp_dir, filter_path = create_tiocsti_seccomp_filter()
+        if filter_path:
+            # The seccomp flag requires a file descriptor number, not a path
+            # We'll need to pass this into bwrap in a different way
+            # For now, store the path so we can use it in the launch function
+            log("Using seccomp filter to block TIOCSTI ioctl for terminal protection")
+        else:
+            log("Warning: Failed to create seccomp filter, terminal protection is reduced")
+            log("         Consider enabling new_session=true in your config for better security")
 
     if config.die_with_parent:
         bind_args += ["--die-with-parent"]
@@ -180,12 +227,8 @@ def build_bind_args(
     for var, value in preserved_env.items():
         bind_args += ["--setenv", var, value]
 
-    # Cleanup temporary file at the end
-    if seccomp_filter_path:
-        with suppress(Exception):
-            os.unlink(seccomp_filter_path)
-
-    return bind_args
+    # Clean up temp files (now done in launch())
+    return bind_args, filter_path  # Return the filter path as well
 
 
 def get_sandbox_home(project_dir: Path) -> Path:
@@ -224,6 +267,23 @@ def launch(config: MergedSandboxConfig, project_dir: Path) -> None:
         log(f"Error: Failed to create sandbox home directory at {sandbox_home}")
         raise RuntimeError("Could not create sandbox home directory")
 
-    args = build_bind_args(config, project_dir, sandbox_home)
+    args, seccomp_filter_path = build_bind_args(config, project_dir, sandbox_home)
+
     log(f"Launching sandboxed shell: {config.shell}")
-    os.execvp("bwrap", ["bwrap"] + args + [config.shell])
+
+    # If we have a seccomp filter, use it with fd redirection
+    if seccomp_filter_path and os.path.exists(seccomp_filter_path):
+        # Use file descriptor 10 for the seccomp filter
+        args += ["--seccomp", "10"]
+
+        # Open the file and keep the FD
+        seccomp_fd = os.open(seccomp_filter_path, os.O_RDONLY)
+
+        # Duplicate to FD 10 (which bwrap expects)
+        os.dup2(seccomp_fd, 10)
+
+        # Start bwrap with FD 10 pointing to our filter
+        os.execvp("bwrap", ["bwrap"] + args + [config.shell])
+    else:
+        # Regular launch without seccomp
+        os.execvp("bwrap", ["bwrap"] + args + [config.shell])

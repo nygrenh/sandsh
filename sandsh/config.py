@@ -30,7 +30,7 @@ class SandboxConfig:
     profile: str | None = None
     shell: str | None = None
     bind_mounts: list[BindMount] = field(default_factory=list)
-    new_session: bool = False  # Default to false to avoid TTY issues
+    new_session: bool = False  # Set to true for better security but may have TTY issues
     die_with_parent: bool = True  # Kill sandbox when parent process dies
     network_enabled: bool = True  # By default we enable network
     disable_userns: bool = True  # Prevent creation of new user namespaces (security)
