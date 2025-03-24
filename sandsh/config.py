@@ -38,6 +38,14 @@ class GlobalConfig:
     profiles: dict[str, SandboxConfig] = field(default_factory=dict)
 
 
+@dataclass
+class MergedSandboxConfig:
+    """Configuration with guaranteed non-optional values after merging."""
+    shell: str  # Note: no longer optional
+    profile: str | None = None
+    bind_mounts: list[BindMount] = field(default_factory=list)
+
+
 def load_toml(path: Path) -> dict:
     try:
         with path.open("rb") as f:
@@ -72,7 +80,7 @@ def load_global_config() -> GlobalConfig:
     return GlobalConfig(shell=raw.get("shell"), profiles=profiles)
 
 
-def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> SandboxConfig:
+def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> MergedSandboxConfig:
     if local.profile:
         profile = global_conf.profiles.get(local.profile)
         if not profile:
@@ -80,11 +88,17 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> SandboxCon
         shell = local.shell or (profile and profile.shell) or global_conf.shell
         if not shell:
             fail("No shell specified in local, profile, or global config.")
-        return SandboxConfig(
+        return MergedSandboxConfig(
             profile=local.profile,
             bind_mounts=(profile.bind_mounts if profile else []) + local.bind_mounts,
             shell=shell,
         )
-    if not local.shell:
-        local.shell = global_conf.shell
-    return local
+    
+    shell = local.shell or global_conf.shell
+    if not shell:
+        fail("No shell specified in local or global config.")
+    
+    return MergedSandboxConfig(
+        shell=shell,
+        bind_mounts=local.bind_mounts,
+    )

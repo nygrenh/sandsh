@@ -1,16 +1,11 @@
 import os
 from pathlib import Path
 
-from sandsh.config import SandboxConfig
+from sandsh.config import MergedSandboxConfig
 from sandsh.utils import fail, log
 
 
-def build_bind_args(config: SandboxConfig, project_dir: Path, sandbox_home: Path) -> list[str]:
-    if not config.shell:
-        fail("No shell specified in configuration")
-    shell = config.shell
-    assert shell is not None
-
+def build_bind_args(config: MergedSandboxConfig, project_dir: Path, sandbox_home: Path) -> list[str]:
     bind_args: list[str] = []
 
     for mount in config.bind_mounts:
@@ -33,13 +28,18 @@ def build_bind_args(config: SandboxConfig, project_dir: Path, sandbox_home: Path
         "--chdir", str(project_dir),
         "--setenv", "HOME", str(sandbox_home),
         "--setenv", "USER", "sandbox",
-        "--setenv", "SHELL", shell,
+        "--setenv", "SHELL", config.shell,
     ]
     return bind_args
 
 
-def print_config_preview(config: SandboxConfig, project_dir: Path) -> None:
-    sandbox_home = project_dir / ".sandbox-home"
+def get_sandbox_home(project_dir: Path) -> Path:
+    project_name = project_dir.name
+    return Path(os.path.expanduser(f"~/sandsh/{project_name}/home"))
+
+
+def print_config_preview(config: MergedSandboxConfig, project_dir: Path) -> None:
+    sandbox_home = get_sandbox_home(project_dir)
     print("\n[sandsh] DRY RUN: Sandbox Configuration")
     print("========================================")
     print(f"Project Directory : {project_dir}")
@@ -52,13 +52,9 @@ def print_config_preview(config: SandboxConfig, project_dir: Path) -> None:
     print("\n[NOTE] This is a dry run. No shell will be launched.\n")
 
 
-def launch(config: SandboxConfig, project_dir: Path) -> None:
-    shell = config.shell
-    if not shell:
-        fail("No shell specified in configuration")
-
-    sandbox_home = project_dir / ".sandbox-home"
+def launch(config: MergedSandboxConfig, project_dir: Path) -> None:
+    sandbox_home = get_sandbox_home(project_dir)
     sandbox_home.mkdir(parents=True, exist_ok=True)
     args = build_bind_args(config, project_dir, sandbox_home)
-    log(f"Launching sandboxed shell: {shell}")
-    os.execvp("bwrap", ["bwrap"] + args + [shell])
+    log(f"Launching sandboxed shell: {config.shell}")
+    os.execvp("bwrap", ["bwrap"] + args + [config.shell])
