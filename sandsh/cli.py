@@ -1,17 +1,55 @@
 import argparse
 from pathlib import Path
 
-from sandsh.config import load_global_config, load_local_config, merge_configs
+from sandsh.config import (
+    CONFIG_FILENAME,
+    GLOBAL_CONFIG_PATH,
+    load_global_config,
+    load_local_config,
+    merge_configs,
+    write_default_config,
+)
 from sandsh.sandbox import launch, print_config_preview
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Launch a bubblewrap sandbox shell.")
-    parser.add_argument(
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+
+    # Run command (default)
+    run_parser = subparsers.add_parser("run", help="Run a sandboxed shell (default)")
+    run_parser.add_argument(
         "--dry-run", action="store_true", help="Preview sandbox configuration without launching"
     )
+
+    # Init command
+    init_parser = subparsers.add_parser("init", help="Initialize configuration files")
+    init_parser.add_argument(
+        "--global",
+        action="store_true",
+        dest="global_",
+        help="Create global config instead of local",
+    )
+    init_parser.add_argument(
+        "--force", "-f", action="store_true", help="Overwrite existing config file"
+    )
+
     args = parser.parse_args()
 
+    # Default to "run" if no command specified
+    if not args.command:
+        args.command = "run"
+        args.dry_run = False
+
+    if args.command == "init":
+        path = GLOBAL_CONFIG_PATH if args.global_ else Path.cwd() / CONFIG_FILENAME
+        if args.force and path.exists():
+            path.unlink()
+        write_default_config(path)
+        return
+
+    # Handle run command
     project_dir = Path.cwd()
     local_config = load_local_config(project_dir)
     global_config = load_global_config()

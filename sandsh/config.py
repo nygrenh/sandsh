@@ -15,6 +15,45 @@ GLOBAL_CONFIG_PATH = Path.home() / ".config" / "sandsh" / "config.toml"
 
 T = TypeVar("T")
 
+# Add near the top with other constants
+DEFAULT_BIND_MOUNTS = [
+    {"source": "/usr", "dest": "/usr", "mode": "ro"},
+    {"source": "/bin", "dest": "/bin", "mode": "ro"},
+    {"source": "/lib", "dest": "/lib", "mode": "ro"},
+    {"source": "/lib64", "dest": "/lib64", "mode": "ro"},
+    {"source": "/etc", "dest": "/etc", "mode": "ro"},
+    {"source": "/proc", "dest": "/proc", "mode": "ro"},
+    {"source": "/sys", "dest": "/sys", "mode": "ro"},
+    {"source": "/var", "dest": "/var", "mode": "ro"},
+    {"source": "/run", "dest": "/run", "mode": "ro"},
+]
+
+DEFAULT_CONFIG = {
+    "default": {
+        "shell": "/bin/bash",
+        "bind_mounts": DEFAULT_BIND_MOUNTS,
+        "network_enabled": True,
+        "clear_env": True,
+        "die_with_parent": True,
+        "disable_userns": True,
+        "unshare_cgroup": True,
+        "use_tiocsti_protection": True,
+    },
+    "profiles": {
+        "restricted": {
+            "network_enabled": False,
+            "new_session": True,
+            "bind_mounts": [
+                # Minimal set of bind mounts for basic functionality
+                {"source": "/usr", "dest": "/usr", "mode": "ro"},
+                {"source": "/bin", "dest": "/bin", "mode": "ro"},
+                {"source": "/lib", "dest": "/lib", "mode": "ro"},
+                {"source": "/lib64", "dest": "/lib64", "mode": "ro"},
+            ],
+        }
+    },
+}
+
 
 @dataclass
 class BindMount:
@@ -270,3 +309,20 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedS
 
     # Convert to finalized config with non-optional fields
     return finalize_config(merged)
+
+
+def write_default_config(path: Path) -> None:
+    """Write the default configuration to the specified path."""
+    if path.exists():
+        fail(f"Config file already exists at {path}")
+
+    # Ensure parent directory exists
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from sandsh import toml
+
+        path.write_text(toml.dumps(DEFAULT_CONFIG))
+        log(f"Created default config at {path}")
+    except Exception as e:
+        fail(f"Failed to write config file: {e}")

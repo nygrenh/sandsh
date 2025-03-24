@@ -172,28 +172,26 @@ def build_bind_args(
 ) -> list[str]:
     bind_args: list[str] = []
 
-    # We always need to bind the project directory itself, otherwise we can't chdir to it
+    # We always need to bind the project directory itself
     bind_args += ["--bind", str(project_dir), str(project_dir)]
-
-    # Add essential system directories as read-only mounts
-    essential_dirs = [
-        "/usr",
-        "/bin",
-        "/lib",
-        "/lib64",
-        "/etc",
-        "/proc",
-        "/sys",
-        "/var",
-        "/run",
-    ]
-
-    for dir_path in essential_dirs:
-        if os.path.exists(dir_path):
-            bind_args += ["--ro-bind", dir_path, dir_path]
 
     # Add a dev directory with the minimum required devices
     bind_args += ["--dev", "/dev"]
+
+    # Process all bind mounts from config
+    for mount in config.bind_mounts:
+        src = Path(os.path.expanduser(mount.source)).resolve()
+        if not src.exists():
+            log(f"Warning: Bind mount source does not exist: {src}")
+            continue
+
+        dest = Path(mount.dest)
+        if mount.create_dest:
+            if not dest.is_absolute():
+                dest = sandbox_home / dest
+            dest.parent.mkdir(parents=True, exist_ok=True)
+        flag = "--ro-bind" if mount.mode == "ro" else "--bind"
+        bind_args += [flag, str(src), str(dest)]
 
     # Seccomp filter setup
     temp_dir = None
@@ -238,16 +236,6 @@ def build_bind_args(
 
     if config.hostname:
         bind_args += ["--hostname", config.hostname]
-
-    for mount in config.bind_mounts:
-        src = Path(os.path.expanduser(mount.source)).resolve()
-        dest = Path(mount.dest)
-        if mount.create_dest:
-            if not dest.is_absolute():
-                dest = sandbox_home / dest
-            dest.parent.mkdir(parents=True, exist_ok=True)
-        flag = "--ro-bind" if mount.mode == "ro" else "--bind"
-        bind_args += [flag, str(src), str(dest)]
 
     bind_args += [
         "--tmpfs",
