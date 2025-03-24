@@ -11,7 +11,7 @@ def build_bind_args(
     config: FinalizedSandboxConfig, project_dir: Path, sandbox_home: Path
 ) -> tuple[list[str], str | None]:
     bind_args: list[str] = []
-    filter_path = None  # Initialize filter_path
+    filter_path = None
 
     # We always need to bind the project directory itself
     bind_args += ["--bind", str(project_dir), str(project_dir)]

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeVar, cast, get_args, get_origin
 
+from sandsh import toml
 from sandsh.utils import fail, log
 
 try:
@@ -22,7 +23,6 @@ class DataclassProtocol(Protocol):
 
 T = TypeVar("T", bound=DataclassProtocol)
 
-# Add near the top with other constants
 DEFAULT_BIND_MOUNTS = [
     {"source": "/usr", "dest": "/usr", "mode": "ro"},
     {"source": "/bin", "dest": "/bin", "mode": "ro"},
@@ -35,14 +35,13 @@ DEFAULT_BIND_MOUNTS = [
     {"source": "/run", "dest": "/run", "mode": "ro"},
 ]
 
-# Replace DEFAULT_CONFIG with separate configs for global and local
 DEFAULT_GLOBAL_CONFIG = {
     "profiles": {
         "default": {
             "shell": "/bin/bash",
             "namespaces": {
                 "unshare_all": True,
-                "network": True,  # Enable network by default
+                "network": True,
                 "user": True,
                 "ipc": True,
                 "pid": True,
@@ -56,7 +55,7 @@ DEFAULT_GLOBAL_CONFIG = {
                 "dev_mounts": ["/dev"],
                 "proc_mounts": ["/proc"],
                 "tmpfs_mounts": [
-                    {"dest": "/tmp", "mode": 0o1777},  # World-writable with sticky bit
+                    {"dest": "/tmp", "mode": 0o1777},
                     {"dest": "/run", "mode": 0o755},
                 ],
             },
@@ -71,7 +70,7 @@ DEFAULT_GLOBAL_CONFIG = {
             "shell": "/bin/bash",
             "namespaces": {
                 "unshare_all": True,
-                "network": False,  # Disable network in restricted mode
+                "network": False,
                 "user": True,
                 "ipc": True,
                 "pid": True,
@@ -93,12 +92,10 @@ DEFAULT_GLOBAL_CONFIG = {
                 "clear_env": True,
                 "preserve_vars": ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"],
                 "die_with_parent": True,
-                "new_session": True,  # Better security in restricted mode
+                "new_session": True,
             },
             "security": {
-                "capabilities": {
-                    "drop_all": True  # Drop all capabilities in restricted mode
-                },
+                "capabilities": {"drop_all": True},
                 "seccomp": {"use_tiocsti_protection": True},
             },
         },
@@ -108,7 +105,6 @@ DEFAULT_GLOBAL_CONFIG = {
 DEFAULT_LOCAL_CONFIG = {
     "sandbox": {
         "profile": "default",
-        # Other settings can be added here to override the profile
     }
 }
 
@@ -177,7 +173,7 @@ class NamespaceConfig:
     user: bool = True
     ipc: bool = True
     pid: bool = True
-    network: bool = False  # Default to isolated network
+    network: bool = False
     uts: bool = True
     cgroup: bool = True
     disable_userns: bool = False
@@ -198,8 +194,8 @@ class FilesystemConfig:
     )
     mqueue_mounts: list[str] = field(default_factory=list)
     overlay_mounts: list[OverlayMount] = field(default_factory=list)
-    system_mounts: bool = True  # Enable standard system mounts
-    system_ro: bool = True  # Mount system directories as read-only
+    system_mounts: bool = True
+    system_ro: bool = True
 
 
 @dataclass
@@ -352,10 +348,8 @@ def load_local_config(project_dir: Path) -> SandboxConfig | None:
             sandbox_config = raw.get("sandbox", {})
             return parse_dataclass_from_dict(SandboxConfig, sandbox_config)
 
-        # Move to parent directory
         parent_dir = current_dir.parent
 
-        # Stop if we've reached the filesystem root
         if parent_dir == current_dir:
             break
 
@@ -383,7 +377,6 @@ def load_global_config() -> GlobalConfig:
     raw = load_toml(GLOBAL_CONFIG_PATH)
     global_config = GlobalConfig()
 
-    # Parse profile configurations
     for name, conf in raw.get("profiles", {}).items():
         global_config.profiles[name] = parse_dataclass_from_dict(SandboxConfig, conf)
 
@@ -400,10 +393,8 @@ def finalize_config(config: SandboxConfig) -> FinalizedSandboxConfig:
         fail("Shell must be specified in the configuration")
 
     return FinalizedSandboxConfig(
-        # Basic settings
         shell=config.shell,
         profile=config.profile,
-        # Configuration objects
         namespaces=config.namespaces,
         filesystem=config.filesystem,
         environment=config.environment,
@@ -493,13 +484,9 @@ def write_default_config(path: Path) -> None:
     if path.exists():
         fail(f"Config file already exists at {path}")
 
-    # Ensure parent directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        from sandsh import toml
-
-        # Use different default configs for global and local
         is_global = path == GLOBAL_CONFIG_PATH
         default_config = DEFAULT_GLOBAL_CONFIG if is_global else DEFAULT_LOCAL_CONFIG
 

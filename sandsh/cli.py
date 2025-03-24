@@ -36,13 +36,11 @@ def main() -> None:
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
-    # Run command (default)
     run_parser = subparsers.add_parser("run", help="Run a sandboxed shell (default)")
     run_parser.add_argument(
         "--dry-run", action="store_true", help="Preview sandbox configuration without launching"
     )
 
-    # Init command
     init_parser = subparsers.add_parser("init", help="Initialize configuration files")
     init_parser.add_argument(
         "--global",
@@ -56,7 +54,6 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Default to "run" if no command specified
     if not args.command:
         args.command = "run"
         args.dry_run = False
@@ -68,11 +65,9 @@ def main() -> None:
         write_default_config(path)
         return
 
-    # Handle run command
     project_dir = Path.cwd()
     local_config = load_local_config(project_dir)
 
-    # Require a local config file to run
     if local_config is None:
         fail(
             f"No {CONFIG_FILENAME} found in current directory or any parent directory.\n"
