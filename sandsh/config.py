@@ -35,6 +35,10 @@ DEFAULT_BIND_MOUNTS = [
 ]
 
 DEFAULT_GLOBAL_CONFIG = """
+###################
+# Default profile #
+###################
+
 [profiles.default]
 shell = "/bin/bash"
 
@@ -69,6 +73,11 @@ die_with_parent = true
 
 [profiles.default.security.seccomp]
 use_tiocsti_protection = true
+
+
+######################
+# Restricted profile #
+######################
 
 [profiles.restricted]
 shell = "/bin/bash"
@@ -314,12 +323,12 @@ class SandboxConfig:
     """Sandbox configuration with a more logical structure."""
 
     profile: str | None = None
-    shell: str = "/bin/bash"
+    shell: str | None = None
     namespaces: NamespaceConfig = field(default_factory=NamespaceConfig)
     filesystem: FilesystemConfig = field(default_factory=FilesystemConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
-    process: ProcessConfig = field(default_factory=ProcessConfig)  # New field
+    process: ProcessConfig = field(default_factory=ProcessConfig)
 
 
 @dataclass
@@ -469,51 +478,76 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedS
     profile = global_conf.profiles[profile_name]
     merged = SandboxConfig(
         profile=profile_name,
-        shell=local.shell or profile.shell,
+        shell=local.shell if local.shell is not None else profile.shell,
         namespaces=NamespaceConfig(
             **{
-                f.name: getattr(local.namespaces, f.name) or getattr(profile.namespaces, f.name)
+                f.name: (
+                    getattr(local.namespaces, f.name)
+                    if getattr(local.namespaces, f.name) is not None
+                    else getattr(profile.namespaces, f.name)
+                )
                 for f in fields(NamespaceConfig)
             }
         ),
         filesystem=FilesystemConfig(
             **{
-                f.name: getattr(local.filesystem, f.name) or getattr(profile.filesystem, f.name)
+                f.name: (
+                    getattr(local.filesystem, f.name)
+                    if getattr(local.filesystem, f.name) is not None
+                    else getattr(profile.filesystem, f.name)
+                )
                 for f in fields(FilesystemConfig)
             }
         ),
         environment=EnvironmentConfig(
             **{
-                f.name: getattr(local.environment, f.name) or getattr(profile.environment, f.name)
+                f.name: (
+                    getattr(local.environment, f.name)
+                    if getattr(local.environment, f.name) is not None
+                    else getattr(profile.environment, f.name)
+                )
                 for f in fields(EnvironmentConfig)
             }
         ),
         security=SecurityConfig(
             capabilities=CapabilityConfig(
                 **{
-                    f.name: getattr(local.security.capabilities, f.name)
-                    or getattr(profile.security.capabilities, f.name)
+                    f.name: (
+                        getattr(local.security.capabilities, f.name)
+                        if getattr(local.security.capabilities, f.name) is not None
+                        else getattr(profile.security.capabilities, f.name)
+                    )
                     for f in fields(CapabilityConfig)
                 }
             ),
             seccomp=SeccompConfig(
                 **{
-                    f.name: getattr(local.security.seccomp, f.name)
-                    or getattr(profile.security.seccomp, f.name)
+                    f.name: (
+                        getattr(local.security.seccomp, f.name)
+                        if getattr(local.security.seccomp, f.name) is not None
+                        else getattr(profile.security.seccomp, f.name)
+                    )
                     for f in fields(SeccompConfig)
                 }
             ),
             selinux=SELinuxConfig(
                 **{
-                    f.name: getattr(local.security.selinux, f.name)
-                    or getattr(profile.security.selinux, f.name)
+                    f.name: (
+                        getattr(local.security.selinux, f.name)
+                        if getattr(local.security.selinux, f.name) is not None
+                        else getattr(profile.security.selinux, f.name)
+                    )
                     for f in fields(SELinuxConfig)
                 }
             ),
         ),
         process=ProcessConfig(
             **{
-                f.name: getattr(local.process, f.name) or getattr(profile.process, f.name)
+                f.name: (
+                    getattr(local.process, f.name)
+                    if getattr(local.process, f.name) is not None
+                    else getattr(profile.process, f.name)
+                )
                 for f in fields(ProcessConfig)
             }
         ),
