@@ -185,16 +185,49 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
     print("========================================")
     print(f"Project Directory : {project_dir}")
     print(f"Sandbox Home      : {sandbox_home}")
-    print(f"Shell             : {config.shell}")
+    print(f"Shell            : {config.shell}")
     print(f"Profile          : {config.profile or 'default'}")
 
     print("\nNamespace Settings:")
-    print(f"  Network        : {'isolated' if config.namespaces.network else 'shared'}")
-    print(f"  User Namespace : {'disabled' if config.namespaces.disable_userns else 'enabled'}")
+    if config.namespaces.unshare_all:
+        print("  All namespaces enabled")
+    else:
+        print(f"  User           : {'enabled' if config.namespaces.user else 'disabled'}")
+        print(f"  Network        : {'enabled' if config.namespaces.network else 'disabled'}")
+        print(f"  IPC            : {'enabled' if config.namespaces.ipc else 'disabled'}")
+        print(f"  PID            : {'enabled' if config.namespaces.pid else 'disabled'}")
+        print(f"  UTS            : {'enabled' if config.namespaces.uts else 'disabled'}")
+        print(f"  Cgroup         : {'enabled' if config.namespaces.cgroup else 'disabled'}")
+    print(f"  User NS        : {'disabled' if config.namespaces.disable_userns else 'enabled'}")
 
-    print("\nBind Mounts:")
-    for bm in config.filesystem.bind_mounts:
-        print(f"  - {bm.source} -> {bm.dest} ({bm.mode})")
+    print("\nFilesystem Settings:")
+    print(f"  System Mounts  : {'enabled' if config.filesystem.system_mounts else 'disabled'}")
+    if config.filesystem.system_mounts:
+        print(f"  System RO      : {'yes' if config.filesystem.system_ro else 'no'}")
+
+    if config.filesystem.bind_mounts:
+        print("\nBind Mounts:")
+        for bm in config.filesystem.bind_mounts:
+            print(f"  - {bm.source} -> {bm.dest} ({bm.mode})")
+
+    if config.filesystem.tmpfs_mounts:
+        print("\nTmpfs Mounts:")
+        for tm in config.filesystem.tmpfs_mounts:
+            mode_str = f", mode={oct(tm.mode)[2:]}" if tm.mode else ""
+            size_str = f", size={tm.size}" if tm.size else ""
+            print(f"  - {tm.dest}{mode_str}{size_str}")
+
+    print("\nEnvironment Settings:")
+    print(f"  Clear Env      : {'yes' if config.environment.clear_env else 'no'}")
+    if config.environment.preserve_vars:
+        print("  Preserved Vars :", ", ".join(config.environment.preserve_vars))
+    if config.environment.set_vars:
+        print("  Set Variables :")
+        for name, value in config.environment.set_vars.items():
+            print(f"    {name}={value}")
+    print(f"  Die w/Parent   : {'yes' if config.environment.die_with_parent else 'no'}")
+    print(f"  New Session    : {'yes' if config.environment.new_session else 'no'}")
+    print(f"  Run as PID 1   : {'yes' if config.environment.as_pid_1 else 'no'}")
 
     print("\nSecurity Settings:")
     if config.security.capabilities.drop_all:
@@ -204,6 +237,18 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
             print("  Added capabilities:", ", ".join(config.security.capabilities.add))
         if config.security.capabilities.drop:
             print("  Dropped capabilities:", ", ".join(config.security.capabilities.drop))
+
+    print(
+        f"  Seccomp TIOCSTI: {'enabled' if config.security.seccomp.use_tiocsti_protection else 'disabled'}"
+    )
+
+    if config.security.seccomp.syscall_rules:
+        print("\nSeccomp Rules:")
+        for rule in config.security.seccomp.syscall_rules:
+            arg_str = ""
+            if rule.arg_index is not None:
+                arg_str = f" (arg[{rule.arg_index}] {rule.arg_op} {rule.arg_value})"
+            print(f"  - {rule.syscall}: {rule.action}{arg_str}")
 
     print("\n[NOTE] This is a dry run. No shell will be launched.\n")
 
