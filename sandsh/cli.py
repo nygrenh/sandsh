@@ -67,13 +67,6 @@ def main() -> None:
 
     project_dir = Path.cwd()
     local_config = load_local_config(project_dir)
-
-    if local_config is None:
-        fail(
-            f"No {CONFIG_FILENAME} found in current directory or any parent directory.\n"
-            f"Initialize a configuration file with 'sandsh init'."
-        )
-
     global_config = load_global_config()
     config = merge_configs(local_config, global_config)
 

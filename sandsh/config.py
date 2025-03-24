@@ -2,7 +2,6 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TypeVar, cast, get_args, get_origin
 
-from sandsh import toml
 from sandsh.utils import fail, log
 
 try:
@@ -35,78 +34,86 @@ DEFAULT_BIND_MOUNTS = [
     {"source": "/run", "dest": "/run", "mode": "ro"},
 ]
 
-DEFAULT_GLOBAL_CONFIG = {
-    "profiles": {
-        "default": {
-            "shell": "/bin/bash",
-            "namespaces": {
-                "unshare_all": True,
-                "network": True,
-                "user": True,
-                "ipc": True,
-                "pid": True,
-                "uts": True,
-                "cgroup": True,
-                "disable_userns": False,
-            },
-            "filesystem": {
-                "system_mounts": True,
-                "system_ro": True,
-                "dev_mounts": ["/dev"],
-                "proc_mounts": ["/proc"],
-                "tmpfs_mounts": [
-                    {"dest": "/tmp", "mode": 0o1777},
-                    {"dest": "/run", "mode": 0o755},
-                ],
-            },
-            "environment": {
-                "clear_env": True,
-                "preserve_vars": ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"],
-                "die_with_parent": True,
-            },
-            "security": {"seccomp": {"use_tiocsti_protection": True}},
-        },
-        "restricted": {
-            "shell": "/bin/bash",
-            "namespaces": {
-                "unshare_all": True,
-                "network": False,
-                "user": True,
-                "ipc": True,
-                "pid": True,
-                "uts": True,
-                "cgroup": True,
-                "disable_userns": True,
-            },
-            "filesystem": {
-                "system_mounts": True,
-                "system_ro": True,
-                "dev_mounts": ["/dev"],
-                "proc_mounts": ["/proc"],
-                "tmpfs_mounts": [
-                    {"dest": "/tmp", "mode": 0o1777},
-                    {"dest": "/run", "mode": 0o755},
-                ],
-            },
-            "environment": {
-                "clear_env": True,
-                "preserve_vars": ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"],
-                "die_with_parent": True,
-                "new_session": True,
-            },
-            "security": {
-                "capabilities": {"drop_all": True},
-                "seccomp": {"use_tiocsti_protection": True},
-            },
-        },
-    }
-}
+DEFAULT_GLOBAL_CONFIG = """
+[profiles.default]
+shell = "/bin/bash"
 
-DEFAULT_LOCAL_CONFIG = {
-    "sandbox": {
-        "profile": "default",
-    }
-}
+[profiles.default.namespaces]
+unshare_all = true
+network = true
+user = true
+ipc = true
+pid = true
+uts = true
+cgroup = true
+disable_userns = false
+
+[profiles.default.filesystem]
+system_mounts = true
+system_ro = true
+dev_mounts = ["/dev"]
+proc_mounts = ["/proc"]
+
+[[profiles.default.filesystem.tmpfs_mounts]]
+dest = "/tmp"
+mode = 0o1777
+
+[[profiles.default.filesystem.tmpfs_mounts]]
+dest = "/run"
+mode = 0o755
+
+[profiles.default.environment]
+clear_env = true
+preserve_vars = ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]
+die_with_parent = true
+
+[profiles.default.security.seccomp]
+use_tiocsti_protection = true
+
+[profiles.restricted]
+shell = "/bin/bash"
+
+[profiles.restricted.namespaces]
+unshare_all = true
+network = false
+user = true
+ipc = true
+pid = true
+uts = true
+cgroup = true
+disable_userns = true
+
+[profiles.restricted.filesystem]
+system_mounts = true
+system_ro = true
+dev_mounts = ["/dev"]
+proc_mounts = ["/proc"]
+
+[[profiles.restricted.filesystem.tmpfs_mounts]]
+dest = "/tmp"
+mode = 0o1777
+
+[[profiles.restricted.filesystem.tmpfs_mounts]]
+dest = "/run"
+mode = 0o755
+
+[profiles.restricted.environment]
+clear_env = true
+preserve_vars = ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]
+die_with_parent = true
+new_session = true
+
+[profiles.restricted.security.capabilities]
+drop_all = true
+
+[profiles.restricted.security.seccomp]
+use_tiocsti_protection = true
+"""
+
+DEFAULT_LOCAL_CONFIG = """
+[sandbox]
+profile = "default"
+"""
 
 
 @dataclass
@@ -330,7 +337,7 @@ def load_toml(path: Path) -> dict[str, Any]:
         fail(f"Failed to parse {path.name}: {e}")
 
 
-def load_local_config(project_dir: Path) -> SandboxConfig | None:
+def load_local_config(project_dir: Path) -> SandboxConfig:
     """Load local sandbox configuration from the project directory or any parent directory.
 
     Returns None if no config file is found.
@@ -355,24 +362,16 @@ def load_local_config(project_dir: Path) -> SandboxConfig | None:
 
         current_dir = parent_dir
 
-    # No config file found in the directory hierarchy
-    return None
+    fail(
+        f"No {CONFIG_FILENAME} found in current directory or any parent directory.\n"
+        f"Initialize a configuration file with 'sandsh init'."
+    )
 
 
 def load_global_config() -> GlobalConfig:
     """Load the global configuration with profiles."""
     if not GLOBAL_CONFIG_PATH.exists():
-        log("No global config found. Using defaults.")
-        return GlobalConfig(
-            profiles={
-                "default": parse_dataclass_from_dict(
-                    SandboxConfig, DEFAULT_GLOBAL_CONFIG["profiles"]["default"]
-                ),
-                "restricted": parse_dataclass_from_dict(
-                    SandboxConfig, DEFAULT_GLOBAL_CONFIG["profiles"]["restricted"]
-                ),
-            }
-        )
+        fail("Global config not found. Please run 'sandsh init --global' to create one.")
 
     raw = load_toml(GLOBAL_CONFIG_PATH)
     global_config = GlobalConfig()
@@ -488,9 +487,9 @@ def write_default_config(path: Path) -> None:
 
     try:
         is_global = path == GLOBAL_CONFIG_PATH
-        default_config = DEFAULT_GLOBAL_CONFIG if is_global else DEFAULT_LOCAL_CONFIG
+        config_str = DEFAULT_GLOBAL_CONFIG if is_global else DEFAULT_LOCAL_CONFIG
 
-        path.write_text(toml.dumps(default_config))
+        path.write_text(config_str.lstrip())
         log(f"Created {'global' if is_global else 'local'} config at {path}")
     except Exception as e:
         fail(f"Failed to write config file: {e}")
