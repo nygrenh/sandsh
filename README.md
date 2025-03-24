@@ -44,51 +44,41 @@ The configuration system uses two types of files:
    Defines profiles with complete sandbox configurations. Example:
 
    ```toml
-   [profiles.default]
-   shell = "/bin/bash"
+    [profiles.default]
+    shell = "/bin/bash"
 
-   [profiles.default.namespaces]
-   unshare_all = true
-   network = true  # Enable network access
-   disable_userns = false
+    [profiles.default.namespaces]
+    unshare_all = true
+    network = true
+    user = true
+    ipc = true
+    pid = true
+    uts = true
+    cgroup = true
+    disable_userns = false
 
-   [profiles.default.filesystem]
-   system_mounts = true  # Enable standard system mounts
-   system_ro = true      # Mount system directories as read-only
+    [profiles.default.filesystem]
+    dev_mounts = ["/dev"]
+    proc_mounts = ["/proc"]
+    bind_mounts = [
+        { source = "/usr", dest = "/usr", mode = "ro" },
+        { source = "/bin", dest = "/bin", mode = "ro" },
+        { source = "/lib", dest = "/lib", mode = "ro" },
+        { source = "/lib64", dest = "/lib64", mode = "ro" },
+        { source = "/etc", dest = "/etc", mode = "ro" },
+    ]
+    tmpfs_mounts = [
+        { dest = "/tmp", mode = 0o1777 },
+        { dest = "/run", mode = 0o755 },
+    ]
 
-   [[profiles.default.filesystem.bind_mounts]]
-   source = "/home/user/projects"
-   dest = "/projects"
-   mode = "rw"
+    [profiles.default.environment]
+    clear_env = true
+    preserve_vars = ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]
+    die_with_parent = true
 
-   [profiles.default.environment]
-   clear_env = true
-   preserve_vars = ["TERM", "DISPLAY", "HOME"]
-   die_with_parent = true
-
-   [profiles.default.security]
-   [profiles.default.security.capabilities]
-   drop_all = false
-   add = ["CAP_NET_BIND_SERVICE"]
-
-   [profiles.restricted]
-   shell = "/bin/bash"
-
-   [profiles.restricted.namespaces]
-   unshare_all = true
-   network = false  # Disable network access
-   disable_userns = true
-
-   [profiles.restricted.filesystem]
-   system_mounts = true
-   system_ro = true
-
-   [profiles.restricted.environment]
-   clear_env = true
-   new_session = true  # Better security
-
-   [profiles.restricted.security.capabilities]
-   drop_all = true  # Drop all capabilities
+    [profiles.default.security.seccomp]
+    use_tiocsti_protection = true
    ```
 
 2. **Local Config** (`.sandshrc.toml`):
@@ -103,10 +93,7 @@ The configuration system uses two types of files:
    network = false  # Disable network for this project
 
    [sandbox.filesystem]
-   [[sandbox.filesystem.bind_mounts]]
-   source = "./data"
-   dest = "/data"
-   mode = "ro"
+   bind_mounts = [{ source = "./data", dest = "/data", mode = "ro" }]
 
    [sandbox.environment]
    set_vars = { DEBUG = "1" }
