@@ -11,6 +11,54 @@ def build_bind_args(
 ) -> list[str]:
     bind_args: list[str] = []
 
+    # We always need to bind the project directory itself, otherwise we can't chdir to it
+    bind_args += ["--bind", str(project_dir), str(project_dir)]
+
+    # Add essential system directories as read-only mounts
+    essential_dirs = [
+        "/usr",
+        "/bin",
+        "/lib",
+        "/lib64",
+        "/etc",
+        "/proc",
+        "/sys",
+        "/var",
+        "/run",
+    ]
+
+    for dir_path in essential_dirs:
+        if os.path.exists(dir_path):
+            bind_args += ["--ro-bind", dir_path, dir_path]
+
+    # Add a dev directory with the minimum required devices
+    bind_args += ["--dev", "/dev"]
+
+    # Add additional sandbox options from config
+    if config.new_session:
+        bind_args += ["--new-session"]
+
+    if config.die_with_parent:
+        bind_args += ["--die-with-parent"]
+
+    if config.disable_userns:
+        bind_args += ["--disable-userns"]
+
+    if config.clear_env:
+        bind_args += ["--clearenv"]
+
+    if config.unshare_cgroup:
+        bind_args += ["--unshare-cgroup-try"]
+
+    if config.sandbox_uid is not None:
+        bind_args += ["--uid", str(config.sandbox_uid)]
+
+    if config.sandbox_gid is not None:
+        bind_args += ["--gid", str(config.sandbox_gid)]
+
+    if config.hostname:
+        bind_args += ["--hostname", config.hostname]
+
     for mount in config.bind_mounts:
         src = Path(os.path.expanduser(mount.source)).resolve()
         dest = Path(mount.dest)
@@ -24,13 +72,23 @@ def build_bind_args(
     bind_args += [
         "--tmpfs",
         "/tmp",
-        "--unshare-net",
+    ]
+
+    # Only unshare network if network_enabled is False
+    if not config.network_enabled:
+        bind_args += ["--unshare-net"]
+
+    bind_args += [
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
         "--unshare-user",
         "--chdir",
         str(project_dir),
+    ]
+
+    # Only set environment variables after --clearenv if used
+    bind_args += [
         "--setenv",
         "HOME",
         str(sandbox_home),
@@ -41,6 +99,7 @@ def build_bind_args(
         "SHELL",
         config.shell,
     ]
+
     return bind_args
 
 

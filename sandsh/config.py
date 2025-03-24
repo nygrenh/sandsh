@@ -30,6 +30,15 @@ class SandboxConfig:
     profile: str | None = None
     shell: str | None = None
     bind_mounts: list[BindMount] = field(default_factory=list)
+    new_session: bool = True  # Create a new terminal session for security
+    die_with_parent: bool = True  # Kill sandbox when parent process dies
+    network_enabled: bool = True  # By default we enable network
+    disable_userns: bool = True  # Prevent creation of new user namespaces (security)
+    clear_env: bool = True  # Start with clean environment
+    sandbox_uid: int | None = None  # Custom UID in sandbox (None = keep current)
+    sandbox_gid: int | None = None  # Custom GID in sandbox (None = keep current)
+    hostname: str | None = None  # Custom hostname in sandbox
+    unshare_cgroup: bool = True  # Use cgroup namespace isolation
 
 
 @dataclass
@@ -42,9 +51,18 @@ class GlobalConfig:
 class MergedSandboxConfig:
     """Configuration with guaranteed non-optional values after merging."""
 
-    shell: str  # Note: no longer optional
+    shell: str
     profile: str | None = None
     bind_mounts: list[BindMount] = field(default_factory=list)
+    new_session: bool = True
+    die_with_parent: bool = True
+    network_enabled: bool = True
+    disable_userns: bool = True
+    clear_env: bool = True
+    sandbox_uid: int | None = None
+    sandbox_gid: int | None = None
+    hostname: str | None = None
+    unshare_cgroup: bool = True
 
 
 def load_toml(path: Path) -> dict:
@@ -93,6 +111,15 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> MergedSand
             profile=local.profile,
             bind_mounts=(profile.bind_mounts if profile else []) + local.bind_mounts,
             shell=shell,
+            new_session=local.new_session,
+            die_with_parent=local.die_with_parent,
+            network_enabled=local.network_enabled,
+            disable_userns=local.disable_userns,
+            clear_env=local.clear_env,
+            sandbox_uid=local.sandbox_uid,
+            sandbox_gid=local.sandbox_gid,
+            hostname=local.hostname,
+            unshare_cgroup=local.unshare_cgroup,
         )
 
     shell = local.shell or global_conf.shell
@@ -102,4 +129,13 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> MergedSand
     return MergedSandboxConfig(
         shell=shell,
         bind_mounts=local.bind_mounts,
+        new_session=local.new_session,
+        die_with_parent=local.die_with_parent,
+        network_enabled=local.network_enabled,
+        disable_userns=local.disable_userns,
+        clear_env=local.clear_env,
+        sandbox_uid=local.sandbox_uid,
+        sandbox_gid=local.sandbox_gid,
+        hostname=local.hostname,
+        unshare_cgroup=local.unshare_cgroup,
     )
