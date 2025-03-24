@@ -22,18 +22,6 @@ class DataclassProtocol(Protocol):
 
 T = TypeVar("T", bound=DataclassProtocol)
 
-DEFAULT_BIND_MOUNTS = [
-    {"source": "/usr", "dest": "/usr", "mode": "ro"},
-    {"source": "/bin", "dest": "/bin", "mode": "ro"},
-    {"source": "/lib", "dest": "/lib", "mode": "ro"},
-    {"source": "/lib64", "dest": "/lib64", "mode": "ro"},
-    {"source": "/etc", "dest": "/etc", "mode": "ro"},
-    {"source": "/proc", "dest": "/proc", "mode": "ro"},
-    {"source": "/sys", "dest": "/sys", "mode": "ro"},
-    {"source": "/var", "dest": "/var", "mode": "ro"},
-    {"source": "/run", "dest": "/run", "mode": "ro"},
-]
-
 DEFAULT_GLOBAL_CONFIG = """
 ###################
 # Default profile #
@@ -53,8 +41,31 @@ cgroup = true
 disable_userns = false
 
 [profiles.default.filesystem]
-system_mounts = true
-system_ro = true
+[[profiles.default.filesystem.bind_mounts]]
+source = "/usr"
+dest = "/usr"
+mode = "ro"
+
+[[profiles.default.filesystem.bind_mounts]]
+source = "/bin"
+dest = "/bin"
+mode = "ro"
+
+[[profiles.default.filesystem.bind_mounts]]
+source = "/lib"
+dest = "/lib"
+mode = "ro"
+
+[[profiles.default.filesystem.bind_mounts]]
+source = "/lib64"
+dest = "/lib64"
+mode = "ro"
+
+[[profiles.default.filesystem.bind_mounts]]
+source = "/etc"
+dest = "/etc"
+mode = "ro"
+
 dev_mounts = ["/dev"]
 proc_mounts = ["/proc"]
 
@@ -254,8 +265,6 @@ class FilesystemConfig:
     )
     mqueue_mounts: list[str] = field(default_factory=list)
     overlay_mounts: list[OverlayMount] = field(default_factory=list)
-    system_mounts: bool = True
-    system_ro: bool = True
     remount_ro: list[str] = field(default_factory=list)
     chmod_entries: list[tuple[str, int]] = field(default_factory=list)
     file_entries: list[FileEntry] = field(default_factory=list)

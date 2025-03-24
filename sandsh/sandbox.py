@@ -48,20 +48,6 @@ def build_bind_args(
     if config.namespaces.pidns_fd is not None:
         bind_args += ["--pidns", str(config.namespaces.pidns_fd)]
 
-    # Process filesystem mounts
-    if config.filesystem.system_mounts:
-        system_mounts = [
-            ("/usr", "/usr"),
-            ("/bin", "/bin"),
-            ("/lib", "/lib"),
-            ("/lib64", "/lib64"),
-            ("/etc", "/etc"),
-        ]
-        for src, dest in system_mounts:
-            if os.path.exists(src):
-                mode = "ro" if config.filesystem.system_ro else "rw"
-                bind_args += [f"--{mode}-bind", src, dest]
-
     # Process all mount types
     for mount in config.filesystem.bind_mounts:
         src = Path(os.path.expanduser(mount.source)).resolve()
@@ -296,10 +282,6 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
             print(f"  PID NS FD      : {config.namespaces.pidns_fd}")
 
     print("\nFilesystem Settings:")
-    print(f"  System Mounts  : {'enabled' if config.filesystem.system_mounts else 'disabled'}")
-    if config.filesystem.system_mounts:
-        print(f"  System RO      : {'yes' if config.filesystem.system_ro else 'no'}")
-
     if config.filesystem.bind_mounts:
         print("\nBind Mounts:")
         for bm in config.filesystem.bind_mounts:
