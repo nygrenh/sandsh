@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 
@@ -45,7 +46,9 @@ def build_bind_args(
 
 def get_sandbox_home(project_dir: Path) -> Path:
     project_name = project_dir.name
-    return Path(os.path.expanduser(f"~/sandsh/{project_name}/home"))
+    path_hash = hashlib.sha256(str(project_dir.resolve()).encode()).hexdigest()
+    hash_prefix = path_hash[:8]
+    return Path(os.path.expanduser(f"~/sandsh/{project_name}-{hash_prefix}/home"))
 
 
 def print_config_preview(config: MergedSandboxConfig, project_dir: Path) -> None:
@@ -64,7 +67,19 @@ def print_config_preview(config: MergedSandboxConfig, project_dir: Path) -> None
 
 def launch(config: MergedSandboxConfig, project_dir: Path) -> None:
     sandbox_home = get_sandbox_home(project_dir)
-    sandbox_home.mkdir(parents=True, exist_ok=True)
+    try:
+        sandbox_home.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        log(f"Error: Cannot create sandbox home directory at {sandbox_home}")
+        raise
+    except OSError as e:
+        log(f"Error: Failed to create sandbox home directory: {e}")
+        raise
+
+    if not sandbox_home.exists():
+        log(f"Error: Failed to create sandbox home directory at {sandbox_home}")
+        raise RuntimeError("Could not create sandbox home directory")
+
     args = build_bind_args(config, project_dir, sandbox_home)
     log(f"Launching sandboxed shell: {config.shell}")
     os.execvp("bwrap", ["bwrap"] + args + [config.shell])
