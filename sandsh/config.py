@@ -187,6 +187,50 @@ class NamespaceConfig:
     uid: int | None = None
     gid: int | None = None
     hostname: str | None = None
+    user_try: bool = False
+    cgroup_try: bool = False
+    share_net: bool = False
+    userns_fd: int | None = None
+    userns2_fd: int | None = None
+    pidns_fd: int | None = None
+    assert_userns_disabled: bool = False
+
+
+@dataclass
+class ProcessConfig:
+    """Configuration for process-related settings."""
+
+    argv0: str | None = None
+    lock_files: list[str] = field(default_factory=list)
+    sync_fd: int | None = None
+    info_fd: int | None = None
+    json_status_fd: int | None = None
+    block_fd: int | None = None
+    userns_block_fd: int | None = None
+    level_prefix: bool = False
+    args_fds: list[int] = field(default_factory=list)
+
+
+@dataclass
+class FileEntry:
+    """Configuration for file creation and manipulation."""
+
+    dest: str
+    source_fd: int | None = None  # For file, bind-data, and ro-bind-data operations
+    source_path: str | None = None  # For symlink target
+    mode: int | None = None  # File permissions
+    type: str = "file"  # file, dir, symlink, bind-data, ro-bind-data
+
+    def __post_init__(self):
+        valid_types = ["file", "dir", "symlink", "bind-data", "ro-bind-data"]
+        if self.type not in valid_types:
+            fail(f"Invalid file entry type '{self.type}'. Valid types: {valid_types}")
+
+        if self.type in ["file", "bind-data", "ro-bind-data"] and self.source_fd is None:
+            fail(f"source_fd is required for type '{self.type}'")
+
+        if self.type == "symlink" and self.source_path is None:
+            fail("source_path (target) is required for symlinks")
 
 
 @dataclass
@@ -203,6 +247,14 @@ class FilesystemConfig:
     overlay_mounts: list[OverlayMount] = field(default_factory=list)
     system_mounts: bool = True
     system_ro: bool = True
+    remount_ro: list[str] = field(default_factory=list)
+    chmod_entries: list[tuple[str, int]] = field(default_factory=list)
+    file_entries: list[FileEntry] = field(default_factory=list)
+    bind_try: list[BindMount] = field(default_factory=list)
+    dev_bind_try: list[BindMount] = field(default_factory=list)
+    ro_bind_try: list[BindMount] = field(default_factory=list)
+    next_perms: int | None = None  # Affects next filesystem operation
+    next_size: int | None = None  # Affects next tmpfs mount
 
 
 @dataclass
@@ -236,6 +288,8 @@ class SeccompConfig:
     syscall_rules: list[SeccompSyscallRule] = field(default_factory=list)
     custom_filter_path: str | None = None
     use_tiocsti_protection: bool = True
+    # New field
+    additional_filter_fds: list[int] = field(default_factory=list)  # --add-seccomp-fd
 
 
 @dataclass
@@ -265,6 +319,7 @@ class SandboxConfig:
     filesystem: FilesystemConfig = field(default_factory=FilesystemConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    process: ProcessConfig = field(default_factory=ProcessConfig)  # New field
 
 
 @dataclass
@@ -288,6 +343,7 @@ class FinalizedSandboxConfig:
     filesystem: FilesystemConfig = field(default_factory=FilesystemConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    process: ProcessConfig = field(default_factory=ProcessConfig)
 
 
 def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
@@ -398,6 +454,7 @@ def finalize_config(config: SandboxConfig) -> FinalizedSandboxConfig:
         filesystem=config.filesystem,
         environment=config.environment,
         security=config.security,
+        process=config.process,
     )
 
 
@@ -453,6 +510,12 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedS
                     for f in fields(SELinuxConfig)
                 }
             ),
+        ),
+        process=ProcessConfig(
+            **{
+                f.name: getattr(local.process, f.name) or getattr(profile.process, f.name)
+                for f in fields(ProcessConfig)
+            }
         ),
     )
 

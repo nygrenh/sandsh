@@ -19,9 +19,13 @@ def build_bind_args(
     # Handle namespace options
     if config.namespaces.unshare_all:
         bind_args += ["--unshare-all"]
+        if config.namespaces.share_net:
+            bind_args += ["--share-net"]
     else:
         # Individual namespace options
-        if config.namespaces.user:
+        if config.namespaces.user_try:
+            bind_args += ["--unshare-user-try"]
+        elif config.namespaces.user:
             bind_args += ["--unshare-user"]
         if config.namespaces.ipc:
             bind_args += ["--unshare-ipc"]
@@ -31,8 +35,18 @@ def build_bind_args(
             bind_args += ["--unshare-net"]
         if config.namespaces.uts:
             bind_args += ["--unshare-uts"]
-        if config.namespaces.cgroup:
+        if config.namespaces.cgroup_try:
+            bind_args += ["--unshare-cgroup-try"]
+        elif config.namespaces.cgroup:
             bind_args += ["--unshare-cgroup"]
+
+    # Handle user namespace FDs
+    if config.namespaces.userns_fd is not None:
+        bind_args += ["--userns", str(config.namespaces.userns_fd)]
+    if config.namespaces.userns2_fd is not None:
+        bind_args += ["--userns2", str(config.namespaces.userns2_fd)]
+    if config.namespaces.pidns_fd is not None:
+        bind_args += ["--pidns", str(config.namespaces.pidns_fd)]
 
     # Process filesystem mounts
     if config.filesystem.system_mounts:
@@ -92,7 +106,7 @@ def build_bind_args(
         else:
             bind_args += ["--tmp-overlay", mount.dest]
 
-    # Process environment settings
+    # Handle environment settings
     if config.environment.clear_env:
         bind_args += ["--clearenv"]
         # Preserve specified environment variables
@@ -154,6 +168,72 @@ def build_bind_args(
     if config.namespaces.hostname:
         bind_args += ["--hostname", config.namespaces.hostname]
 
+    # Process configuration
+    if config.process.argv0:
+        bind_args += ["--argv0", config.process.argv0]
+    for lock_file in config.process.lock_files:
+        bind_args += ["--lock-file", lock_file]
+    if config.process.sync_fd is not None:
+        bind_args += ["--sync-fd", str(config.process.sync_fd)]
+    if config.process.info_fd is not None:
+        bind_args += ["--info-fd", str(config.process.info_fd)]
+    if config.process.json_status_fd is not None:
+        bind_args += ["--json-status-fd", str(config.process.json_status_fd)]
+    if config.process.block_fd is not None:
+        bind_args += ["--block-fd", str(config.process.block_fd)]
+    if config.process.userns_block_fd is not None:
+        bind_args += ["--userns-block-fd", str(config.process.userns_block_fd)]
+
+    # Handle remount-ro
+    for path in config.filesystem.remount_ro:
+        bind_args += ["--remount-ro", path]
+
+    # Handle chmod entries
+    for path, mode in config.filesystem.chmod_entries:
+        bind_args += ["--chmod", oct(mode)[2:], path]
+
+    # Handle file entries with proper perms/size ordering
+    for entry in config.filesystem.file_entries:
+        # Set size first if needed (only affects tmpfs)
+        if config.filesystem.next_size is not None:
+            bind_args += ["--size", str(config.filesystem.next_size)]
+            config.filesystem.next_size = None
+
+        # Set perms if needed
+        if config.filesystem.next_perms is not None:
+            bind_args += ["--perms", oct(config.filesystem.next_perms)[2:]]
+            config.filesystem.next_perms = None
+        elif entry.mode is not None:
+            bind_args += ["--perms", oct(entry.mode)[2:]]
+
+        # Handle the actual operation
+        if entry.type == "dir":
+            bind_args += ["--dir", entry.dest]
+        elif entry.type == "file":
+            bind_args += ["--file", str(entry.source_fd), entry.dest]
+        elif entry.type == "symlink":
+            bind_args += ["--symlink", entry.source_path, entry.dest]
+        elif entry.type == "bind-data":
+            bind_args += ["--bind-data", str(entry.source_fd), entry.dest]
+        elif entry.type == "ro-bind-data":
+            bind_args += ["--ro-bind-data", str(entry.source_fd), entry.dest]
+
+    # Handle "try" variants of bind mounts
+    for mount in config.filesystem.bind_try:
+        bind_args += ["--bind-try", mount.source, mount.dest]
+    for mount in config.filesystem.dev_bind_try:
+        bind_args += ["--dev-bind-try", mount.source, mount.dest]
+    for mount in config.filesystem.ro_bind_try:
+        bind_args += ["--ro-bind-try", mount.source, mount.dest]
+
+    # Handle process options
+    if config.process.level_prefix:
+        bind_args += ["--level-prefix"]
+
+    # Handle additional seccomp filters
+    for fd in config.security.seccomp.additional_filter_fds:
+        bind_args += ["--add-seccomp-fd", str(fd)]
+
     # Basic sandbox setup
     bind_args += [
         "--chdir",
@@ -191,14 +271,29 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
     print("\nNamespace Settings:")
     if config.namespaces.unshare_all:
         print("  All namespaces enabled")
+        if config.namespaces.share_net:
+            print("  Network sharing enabled")
     else:
-        print(f"  User           : {'enabled' if config.namespaces.user else 'disabled'}")
+        print(
+            f"  User           : {'try' if config.namespaces.user_try else 'enabled' if config.namespaces.user else 'disabled'}"
+        )
         print(f"  Network        : {'enabled' if config.namespaces.network else 'disabled'}")
         print(f"  IPC            : {'enabled' if config.namespaces.ipc else 'disabled'}")
         print(f"  PID            : {'enabled' if config.namespaces.pid else 'disabled'}")
         print(f"  UTS            : {'enabled' if config.namespaces.uts else 'disabled'}")
-        print(f"  Cgroup         : {'enabled' if config.namespaces.cgroup else 'disabled'}")
+        print(
+            f"  Cgroup         : {'try' if config.namespaces.cgroup_try else 'enabled' if config.namespaces.cgroup else 'disabled'}"
+        )
     print(f"  User NS        : {'disabled' if config.namespaces.disable_userns else 'enabled'}")
+
+    if any([config.namespaces.userns_fd, config.namespaces.userns2_fd, config.namespaces.pidns_fd]):
+        print("\nNamespace FDs:")
+        if config.namespaces.userns_fd is not None:
+            print(f"  User NS FD     : {config.namespaces.userns_fd}")
+        if config.namespaces.userns2_fd is not None:
+            print(f"  User NS2 FD    : {config.namespaces.userns2_fd}")
+        if config.namespaces.pidns_fd is not None:
+            print(f"  PID NS FD      : {config.namespaces.pidns_fd}")
 
     print("\nFilesystem Settings:")
     print(f"  System Mounts  : {'enabled' if config.filesystem.system_mounts else 'disabled'}")
@@ -217,6 +312,38 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
             size_str = f", size={tm.size}" if tm.size else ""
             print(f"  - {tm.dest}{mode_str}{size_str}")
 
+    if config.filesystem.remount_ro:
+        print("\nRead-only Remounts:")
+        for path in config.filesystem.remount_ro:
+            print(f"  - {path}")
+
+    if config.filesystem.chmod_entries:
+        print("\nChmod Entries:")
+        for path, mode in config.filesystem.chmod_entries:
+            print(f"  - {path}: {oct(mode)[2:]}")
+
+    if config.filesystem.file_entries:
+        print("\nFile Operations:")
+        for entry in config.filesystem.file_entries:
+            mode_str = f", mode={oct(entry.mode)[2:]}" if entry.mode else ""
+            if entry.type == "dir":
+                print(f"  - Create directory: {entry.dest}{mode_str}")
+            elif entry.type == "symlink":
+                print(f"  - Create symlink: {entry.dest} -> {entry.source_path}")
+            else:
+                print(f"  - {entry.type}: fd {entry.source_fd} -> {entry.dest}{mode_str}")
+
+    if any(
+        [config.filesystem.bind_try, config.filesystem.dev_bind_try, config.filesystem.ro_bind_try]
+    ):
+        print("\nOptional Bind Mounts:")
+        for mount in config.filesystem.bind_try:
+            print(f"  - Try bind: {mount.source} -> {mount.dest} ({mount.mode})")
+        for mount in config.filesystem.dev_bind_try:
+            print(f"  - Try dev-bind: {mount.source} -> {mount.dest} ({mount.mode})")
+        for mount in config.filesystem.ro_bind_try:
+            print(f"  - Try ro-bind: {mount.source} -> {mount.dest} ({mount.mode})")
+
     print("\nEnvironment Settings:")
     print(f"  Clear Env      : {'yes' if config.environment.clear_env else 'no'}")
     if config.environment.preserve_vars:
@@ -228,6 +355,35 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
     print(f"  Die w/Parent   : {'yes' if config.environment.die_with_parent else 'no'}")
     print(f"  New Session    : {'yes' if config.environment.new_session else 'no'}")
     print(f"  Run as PID 1   : {'yes' if config.environment.as_pid_1 else 'no'}")
+
+    if any(
+        [
+            config.process.argv0,
+            config.process.lock_files,
+            config.process.sync_fd,
+            config.process.info_fd,
+            config.process.json_status_fd,
+            config.process.block_fd,
+            config.process.userns_block_fd,
+        ]
+    ):
+        print("\nProcess Settings:")
+        if config.process.argv0:
+            print(f"  argv[0]        : {config.process.argv0}")
+        if config.process.lock_files:
+            print("  Lock Files     :", ", ".join(config.process.lock_files))
+        if config.process.sync_fd is not None:
+            print(f"  Sync FD        : {config.process.sync_fd}")
+        if config.process.info_fd is not None:
+            print(f"  Info FD        : {config.process.info_fd}")
+        if config.process.json_status_fd is not None:
+            print(f"  JSON Status FD : {config.process.json_status_fd}")
+        if config.process.block_fd is not None:
+            print(f"  Block FD       : {config.process.block_fd}")
+        if config.process.userns_block_fd is not None:
+            print(f"  UserNS Block FD: {config.process.userns_block_fd}")
+        if config.process.level_prefix:
+            print("  Level Prefix   : enabled")
 
     print("\nSecurity Settings:")
     if config.security.capabilities.drop_all:
@@ -249,6 +405,20 @@ def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> N
             if rule.arg_index is not None:
                 arg_str = f" (arg[{rule.arg_index}] {rule.arg_op} {rule.arg_value})"
             print(f"  - {rule.syscall}: {rule.action}{arg_str}")
+
+    if config.security.seccomp.additional_filter_fds:
+        print(
+            "  Additional Seccomp Filters:",
+            ", ".join(str(fd) for fd in config.security.seccomp.additional_filter_fds),
+        )
+
+    if config.process.args_fds:
+        print("  Args FDs       :", ", ".join(str(fd) for fd in config.process.args_fds))
+
+    if config.filesystem.next_perms is not None:
+        print(f"  Next Perms     : {oct(config.filesystem.next_perms)[2:]}")
+    if config.filesystem.next_size is not None:
+        print(f"  Next Size      : {config.filesystem.next_size} bytes")
 
     print("\n[NOTE] This is a dry run. No shell will be launched.\n")
 
