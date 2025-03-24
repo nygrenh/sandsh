@@ -68,7 +68,11 @@ DEFAULT_GLOBAL_CONFIG = {
     }
 }
 
-DEFAULT_LOCAL_CONFIG = {"profile": "default"}
+DEFAULT_LOCAL_CONFIG = {
+    "sandbox": {  # Wrap in a table/section
+        "profile": "default"
+    }
+}
 
 
 @dataclass
@@ -221,13 +225,14 @@ def load_local_config(project_dir: Path) -> SandboxConfig | None:
     current_dir = project_dir
 
     # Check the current directory and all parent directories
-    # until we find a config file or reach the filesystem root
     while True:
         path = current_dir / CONFIG_FILENAME
         if path.exists():
             log(f"Found local config at {path}")
             raw = load_toml(path)
-            return parse_dataclass_from_dict(SandboxConfig, raw)
+            # Extract the sandbox section
+            sandbox_config = raw.get("sandbox", {})
+            return parse_dataclass_from_dict(SandboxConfig, sandbox_config)
 
         # Move to parent directory
         parent_dir = current_dir.parent
