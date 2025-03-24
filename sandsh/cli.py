@@ -1,4 +1,5 @@
 import argparse
+import shutil
 from pathlib import Path
 
 from sandsh.config import (
@@ -12,8 +13,25 @@ from sandsh.config import (
 from sandsh.sandbox import launch, print_config_preview
 from sandsh.utils import fail
 
+REQUIRED_PROGRAMS = ["bwrap", "gcc"]
+
+
+def check_required_programs():
+    missing = []
+    for program in REQUIRED_PROGRAMS:
+        if not shutil.which(program):
+            missing.append(program)
+
+    if missing:
+        fail(
+            f"Required program(s) not found in PATH: {', '.join(missing)}\n"
+            "Please install the missing dependencies."
+        )
+
 
 def main() -> None:
+    check_required_programs()
+
     parser = argparse.ArgumentParser(description="Launch a bubblewrap sandbox shell.")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
