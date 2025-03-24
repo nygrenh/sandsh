@@ -2,11 +2,16 @@ import os
 from pathlib import Path
 
 from sandsh.config import SandboxConfig
-from sandsh.utils import log
+from sandsh.utils import fail, log
 
 
 def build_bind_args(config: SandboxConfig, project_dir: Path, sandbox_home: Path) -> list[str]:
-    bind_args = []
+    if not config.shell:
+        fail("No shell specified in configuration")
+    shell = config.shell
+    assert shell is not None
+
+    bind_args: list[str] = []
 
     for mount in config.bind_mounts:
         src = Path(os.path.expanduser(mount.source)).resolve()
@@ -19,38 +24,16 @@ def build_bind_args(config: SandboxConfig, project_dir: Path, sandbox_home: Path
         bind_args += [flag, str(src), str(dest)]
 
     bind_args += [
-        "--bind",
-        str(project_dir),
-        str(project_dir),
-        "--bind",
-        str(sandbox_home),
-        str(sandbox_home),
-        "--dev-bind",
-        "/",
-        "/",
-        "--ro-bind",
-        "/etc",
-        "/etc",
-        "--proc",
-        "/proc",
-        "--tmpfs",
-        "/tmp",
+        "--tmpfs", "/tmp",
         "--unshare-net",
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
         "--unshare-user",
-        "--chdir",
-        str(project_dir),
-        "--setenv",
-        "HOME",
-        str(sandbox_home),
-        "--setenv",
-        "USER",
-        "sandbox",
-        "--setenv",
-        "SHELL",
-        config.shell,
+        "--chdir", str(project_dir),
+        "--setenv", "HOME", str(sandbox_home),
+        "--setenv", "USER", "sandbox",
+        "--setenv", "SHELL", shell,
     ]
     return bind_args
 
@@ -71,6 +54,9 @@ def print_config_preview(config: SandboxConfig, project_dir: Path) -> None:
 
 def launch(config: SandboxConfig, project_dir: Path) -> None:
     shell = config.shell
+    if not shell:
+        fail("No shell specified in configuration")
+
     sandbox_home = project_dir / ".sandbox-home"
     sandbox_home.mkdir(parents=True, exist_ok=True)
     args = build_bind_args(config, project_dir, sandbox_home)

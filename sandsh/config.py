@@ -77,12 +77,12 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> SandboxCon
         profile = global_conf.profiles.get(local.profile)
         if not profile:
             fail(f"Profile '{local.profile}' not found in global config.")
-        shell = local.shell or profile.shell or global_conf.shell
+        shell = local.shell or (profile and profile.shell) or global_conf.shell
         if not shell:
             fail("No shell specified in local, profile, or global config.")
         return SandboxConfig(
             profile=local.profile,
-            bind_mounts=profile.bind_mounts + local.bind_mounts,
+            bind_mounts=(profile.bind_mounts if profile else []) + local.bind_mounts,
             shell=shell,
         )
     if not local.shell:

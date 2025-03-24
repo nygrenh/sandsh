@@ -1,4 +1,5 @@
 import sys
+from typing import NoReturn
 
 
 def log(msg: str) -> None:
@@ -13,6 +14,6 @@ def error(msg: str) -> None:
     print(f"[sandsh:error] {msg}", file=sys.stderr)
 
 
-def fail(msg: str) -> None:
+def fail(msg: str) -> NoReturn:
     error(msg)
     sys.exit(1)
