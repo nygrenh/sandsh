@@ -2,13 +2,13 @@ import hashlib
 import os
 from pathlib import Path
 
-from sandsh.config import MergedSandboxConfig
+from sandsh.config import FinalizedSandboxConfig
 from sandsh.seccomp import create_seccomp_filter
 from sandsh.utils import log
 
 
 def build_bind_args(
-    config: MergedSandboxConfig, project_dir: Path, sandbox_home: Path
+    config: FinalizedSandboxConfig, project_dir: Path, sandbox_home: Path
 ) -> list[str]:
     bind_args: list[str] = []
 
@@ -123,7 +123,7 @@ def get_sandbox_home(project_dir: Path) -> Path:
     return Path(os.path.expanduser(f"~/sandsh/{project_name}-{hash_prefix}/home"))
 
 
-def print_config_preview(config: MergedSandboxConfig, project_dir: Path) -> None:
+def print_config_preview(config: FinalizedSandboxConfig, project_dir: Path) -> None:
     sandbox_home = get_sandbox_home(project_dir)
     print("\n[sandsh] DRY RUN: Sandbox Configuration")
     print("========================================")
@@ -137,7 +137,7 @@ def print_config_preview(config: MergedSandboxConfig, project_dir: Path) -> None
     print("\n[NOTE] This is a dry run. No shell will be launched.\n")
 
 
-def launch(config: MergedSandboxConfig, project_dir: Path) -> None:
+def launch(config: FinalizedSandboxConfig, project_dir: Path) -> None:
     sandbox_home = get_sandbox_home(project_dir)
     try:
         sandbox_home.mkdir(parents=True, exist_ok=True)
