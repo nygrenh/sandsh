@@ -23,10 +23,6 @@ class DataclassProtocol(Protocol):
 T = TypeVar("T", bound=DataclassProtocol)
 
 DEFAULT_GLOBAL_CONFIG = """
-###################
-# Default profile #
-###################
-
 [profiles.default]
 shell = "/bin/bash"
 
@@ -41,41 +37,19 @@ cgroup = true
 disable_userns = false
 
 [profiles.default.filesystem]
-[[profiles.default.filesystem.bind_mounts]]
-source = "/usr"
-dest = "/usr"
-mode = "ro"
-
-[[profiles.default.filesystem.bind_mounts]]
-source = "/bin"
-dest = "/bin"
-mode = "ro"
-
-[[profiles.default.filesystem.bind_mounts]]
-source = "/lib"
-dest = "/lib"
-mode = "ro"
-
-[[profiles.default.filesystem.bind_mounts]]
-source = "/lib64"
-dest = "/lib64"
-mode = "ro"
-
-[[profiles.default.filesystem.bind_mounts]]
-source = "/etc"
-dest = "/etc"
-mode = "ro"
-
 dev_mounts = ["/dev"]
 proc_mounts = ["/proc"]
-
-[[profiles.default.filesystem.tmpfs_mounts]]
-dest = "/tmp"
-mode = 0o1777
-
-[[profiles.default.filesystem.tmpfs_mounts]]
-dest = "/run"
-mode = 0o755
+bind_mounts = [
+    { source = "/usr", dest = "/usr", mode = "ro" },
+    { source = "/bin", dest = "/bin", mode = "ro" },
+    { source = "/lib", dest = "/lib", mode = "ro" },
+    { source = "/lib64", dest = "/lib64", mode = "ro" },
+    { source = "/etc", dest = "/etc", mode = "ro" },
+]
+tmpfs_mounts = [
+    { dest = "/tmp", mode = 0o1777 },
+    { dest = "/run", mode = 0o755 },
+]
 
 [profiles.default.environment]
 clear_env = true
@@ -85,10 +59,7 @@ die_with_parent = true
 [profiles.default.security.seccomp]
 use_tiocsti_protection = true
 
-
-######################
-# Restricted profile #
-######################
+# ---------------------------
 
 [profiles.restricted]
 shell = "/bin/bash"
@@ -104,18 +75,19 @@ cgroup = true
 disable_userns = true
 
 [profiles.restricted.filesystem]
-system_mounts = true
-system_ro = true
 dev_mounts = ["/dev"]
 proc_mounts = ["/proc"]
-
-[[profiles.restricted.filesystem.tmpfs_mounts]]
-dest = "/tmp"
-mode = 0o1777
-
-[[profiles.restricted.filesystem.tmpfs_mounts]]
-dest = "/run"
-mode = 0o755
+bind_mounts = [
+    { source = "/usr", dest = "/usr", mode = "ro" },
+    { source = "/bin", dest = "/bin", mode = "ro" },
+    { source = "/lib", dest = "/lib", mode = "ro" },
+    { source = "/lib64", dest = "/lib64", mode = "ro" },
+    { source = "/etc", dest = "/etc", mode = "ro" },
+]
+tmpfs_mounts = [
+    { dest = "/tmp", mode = 0o1777 },
+    { dest = "/run", mode = 0o755 },
+]
 
 [profiles.restricted.environment]
 clear_env = true
@@ -123,11 +95,9 @@ preserve_vars = ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"
 die_with_parent = true
 new_session = true
 
-[profiles.restricted.security.capabilities]
-drop_all = true
-
-[profiles.restricted.security.seccomp]
-use_tiocsti_protection = true
+[profiles.restricted.security]
+capabilities.drop_all = true
+seccomp.use_tiocsti_protection = true
 """
 
 DEFAULT_LOCAL_CONFIG = """
