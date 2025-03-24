@@ -41,6 +41,7 @@ class GlobalConfig:
 @dataclass
 class MergedSandboxConfig:
     """Configuration with guaranteed non-optional values after merging."""
+
     shell: str  # Note: no longer optional
     profile: str | None = None
     bind_mounts: list[BindMount] = field(default_factory=list)
@@ -93,11 +94,11 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> MergedSand
             bind_mounts=(profile.bind_mounts if profile else []) + local.bind_mounts,
             shell=shell,
         )
-    
+
     shell = local.shell or global_conf.shell
     if not shell:
         fail("No shell specified in local or global config.")
-    
+
     return MergedSandboxConfig(
         shell=shell,
         bind_mounts=local.bind_mounts,

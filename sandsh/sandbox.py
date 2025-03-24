@@ -2,10 +2,12 @@ import os
 from pathlib import Path
 
 from sandsh.config import MergedSandboxConfig
-from sandsh.utils import fail, log
+from sandsh.utils import log
 
 
-def build_bind_args(config: MergedSandboxConfig, project_dir: Path, sandbox_home: Path) -> list[str]:
+def build_bind_args(
+    config: MergedSandboxConfig, project_dir: Path, sandbox_home: Path
+) -> list[str]:
     bind_args: list[str] = []
 
     for mount in config.bind_mounts:
@@ -19,16 +21,24 @@ def build_bind_args(config: MergedSandboxConfig, project_dir: Path, sandbox_home
         bind_args += [flag, str(src), str(dest)]
 
     bind_args += [
-        "--tmpfs", "/tmp",
+        "--tmpfs",
+        "/tmp",
         "--unshare-net",
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
         "--unshare-user",
-        "--chdir", str(project_dir),
-        "--setenv", "HOME", str(sandbox_home),
-        "--setenv", "USER", "sandbox",
-        "--setenv", "SHELL", config.shell,
+        "--chdir",
+        str(project_dir),
+        "--setenv",
+        "HOME",
+        str(sandbox_home),
+        "--setenv",
+        "USER",
+        "sandbox",
+        "--setenv",
+        "SHELL",
+        config.shell,
     ]
     return bind_args
 
