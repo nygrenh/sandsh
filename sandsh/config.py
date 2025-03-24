@@ -530,24 +530,63 @@ def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedS
         ),
     )
 
-    # Special handling for list and dict fields
-    # Filesystem lists
-    merged.filesystem.bind_mounts.extend(local.filesystem.bind_mounts)
-    merged.filesystem.dev_mounts.extend(local.filesystem.dev_mounts)
-    merged.filesystem.proc_mounts.extend(local.filesystem.proc_mounts)
-    merged.filesystem.tmpfs_mounts.extend(local.filesystem.tmpfs_mounts)
-    merged.filesystem.mqueue_mounts.extend(local.filesystem.mqueue_mounts)
-    merged.filesystem.overlay_mounts.extend(local.filesystem.overlay_mounts)
+    # Special handling for list and dict fields to avoid duplicates
+    # For bind_mounts, only add local mounts that aren't duplicates
+    profile_bind_paths = {(mount.source, mount.dest) for mount in profile.filesystem.bind_mounts}
+    merged.filesystem.bind_mounts = list(profile.filesystem.bind_mounts)
+    for mount in local.filesystem.bind_mounts:
+        if (mount.source, mount.dest) not in profile_bind_paths:
+            merged.filesystem.bind_mounts.append(mount)
+
+    # For dev_mounts, proc_mounts, use sets to avoid duplicates
+    merged.filesystem.dev_mounts = list(
+        set(profile.filesystem.dev_mounts) | set(local.filesystem.dev_mounts)
+    )
+    merged.filesystem.proc_mounts = list(
+        set(profile.filesystem.proc_mounts) | set(local.filesystem.proc_mounts)
+    )
+
+    # For tmpfs_mounts, deduplicate by destination
+    tmpfs_by_dest = {mount.dest: mount for mount in profile.filesystem.tmpfs_mounts}
+    for mount in local.filesystem.tmpfs_mounts:
+        tmpfs_by_dest[mount.dest] = mount
+    merged.filesystem.tmpfs_mounts = list(tmpfs_by_dest.values())
+
+    # Other filesystem lists
+    merged.filesystem.mqueue_mounts = list(
+        set(profile.filesystem.mqueue_mounts) | set(local.filesystem.mqueue_mounts)
+    )
+
+    # Overlay mounts need special handling based on dest
+    overlay_by_dest = {mount.dest: mount for mount in profile.filesystem.overlay_mounts}
+    for mount in local.filesystem.overlay_mounts:
+        overlay_by_dest[mount.dest] = mount
+    merged.filesystem.overlay_mounts = list(overlay_by_dest.values())
 
     # Environment variables
     merged.environment.set_vars.update(local.environment.set_vars)
-    merged.environment.unset_vars.extend(local.environment.unset_vars)
-    merged.environment.preserve_vars.extend(local.environment.preserve_vars)
+    merged.environment.unset_vars = list(
+        set(profile.environment.unset_vars) | set(local.environment.unset_vars)
+    )
+    merged.environment.preserve_vars = list(
+        set(profile.environment.preserve_vars) | set(local.environment.preserve_vars)
+    )
 
     # Security lists
-    merged.security.capabilities.add.extend(local.security.capabilities.add)
-    merged.security.capabilities.drop.extend(local.security.capabilities.drop)
-    merged.security.seccomp.syscall_rules.extend(local.security.seccomp.syscall_rules)
+    merged.security.capabilities.add = list(
+        set(profile.security.capabilities.add) | set(local.security.capabilities.add)
+    )
+    merged.security.capabilities.drop = list(
+        set(profile.security.capabilities.drop) | set(local.security.capabilities.drop)
+    )
+
+    # For syscall rules, deduplicate by syscall name and action
+    syscall_rules = {
+        (rule.syscall, rule.action): rule for rule in profile.security.seccomp.syscall_rules
+    }
+    for rule in local.security.seccomp.syscall_rules:
+        syscall_rules[(rule.syscall, rule.action)] = rule
+    merged.security.seccomp.syscall_rules = list(syscall_rules.values())
 
     return finalize_config(merged)
 

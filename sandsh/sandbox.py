@@ -62,18 +62,30 @@ def build_bind_args(
         flag = "--ro-bind" if mount.mode == "ro" else "--bind"
         bind_args += [flag, str(src), str(dest)]
 
-    # Handle special mounts
+    # Handle special mounts - Use sets to eliminate duplicates
+    processed_dev_mounts = set()
     for dest in config.filesystem.dev_mounts:
-        bind_args += ["--dev", dest]
+        if dest not in processed_dev_mounts:
+            bind_args += ["--dev", dest]
+            processed_dev_mounts.add(dest)
 
+    processed_proc_mounts = set()
     for dest in config.filesystem.proc_mounts:
-        bind_args += ["--proc", dest]
+        if dest not in processed_proc_mounts:
+            bind_args += ["--proc", dest]
+            processed_proc_mounts.add(dest)
 
     for dest in config.filesystem.mqueue_mounts:
         bind_args += ["--mqueue", dest]
 
-    # Handle tmpfs mounts
+    # Handle tmpfs mounts - track by destination to avoid duplicates
+    processed_tmpfs_dests = set()
     for mount in config.filesystem.tmpfs_mounts:
+        if mount.dest in processed_tmpfs_dests:
+            continue
+
+        processed_tmpfs_dests.add(mount.dest)
+
         if mount.size is not None:
             bind_args += ["--size", str(mount.size)]
         if mount.mode is not None:
@@ -96,12 +108,18 @@ def build_bind_args(
     if config.environment.clear_env:
         bind_args += ["--clearenv"]
         # Preserve specified environment variables
+        processed_env_vars = set()
         for var in config.environment.preserve_vars:
-            if var in os.environ:
+            if var in os.environ and var not in processed_env_vars:
                 bind_args += ["--setenv", var, os.environ[var]]
+                processed_env_vars.add(var)
 
-    # Set environment variables
+    # Set environment variables - use a dict to avoid duplicates
+    env_vars_set = {}
     for name, value in config.environment.set_vars.items():
+        env_vars_set[name] = value
+
+    for name, value in env_vars_set.items():
         bind_args += ["--setenv", name, value]
 
     # Unset environment variables
