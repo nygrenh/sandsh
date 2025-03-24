@@ -33,26 +33,26 @@ def create_seccomp_filter(config: FinalizedSandboxConfig) -> tuple[str | None, s
     filter_path = os.path.join(temp_dir, "seccomp.bpf")
 
     # If a custom filter path is provided, just use that
-    if config.custom_seccomp_filter:
-        if os.path.exists(config.custom_seccomp_filter):
-            return None, config.custom_seccomp_filter
+    if config.security.seccomp.custom_filter_path:
+        if os.path.exists(config.security.seccomp.custom_filter_path):
+            return None, config.security.seccomp.custom_filter_path
         else:
             log(
-                f"Warning: Specified seccomp filter path {config.custom_seccomp_filter} does not exist"
+                f"Warning: Specified seccomp filter path {config.security.seccomp.custom_filter_path} does not exist"
             )
 
     # Generate C code for the seccomp filter
     rule_lines = []
 
     # Always add the TIOCSTI protection rule if enabled
-    if config.use_tiocsti_protection:
+    if config.security.seccomp.use_tiocsti_protection:
         rule_lines.append("    // Block TIOCSTI ioctl (terminal injection)")
         rule_lines.append("    // TIOCSTI is 0x5412")
         rule_lines.append("    seccomp_rule_add(ctx, SCMP_ACT_ERRNO(1), SCMP_SYS(ioctl), 1,")
         rule_lines.append("                    SCMP_CMP(1, SCMP_CMP_EQ, 0x5412));")
 
     # Add custom rules from config
-    for rule in config.seccomp_syscall_rules:
+    for rule in config.security.seccomp.syscall_rules:
         syscall = rule.syscall
 
         # Convert rule.action to SCMP_ACT constant

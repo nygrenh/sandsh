@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, TypeVar
+from typing import Any, ClassVar, Protocol, TypeVar, cast, get_args, get_origin
 
 from sandsh.utils import fail, log
 
@@ -40,37 +40,75 @@ DEFAULT_GLOBAL_CONFIG = {
     "profiles": {
         "default": {
             "shell": "/bin/bash",
-            "bind_mounts": DEFAULT_BIND_MOUNTS,
-            "network_enabled": True,
-            "clear_env": True,
-            "die_with_parent": True,
-            "disable_userns": True,
-            "unshare_cgroup": True,
-            "use_tiocsti_protection": True,
+            "namespaces": {
+                "unshare_all": True,
+                "network": True,  # Enable network by default
+                "user": True,
+                "ipc": True,
+                "pid": True,
+                "uts": True,
+                "cgroup": True,
+                "disable_userns": False,
+            },
+            "filesystem": {
+                "system_mounts": True,
+                "system_ro": True,
+                "dev_mounts": ["/dev"],
+                "proc_mounts": ["/proc"],
+                "tmpfs_mounts": [
+                    {"dest": "/tmp", "mode": 0o1777},  # World-writable with sticky bit
+                    {"dest": "/run", "mode": 0o755},
+                ],
+            },
+            "environment": {
+                "clear_env": True,
+                "preserve_vars": ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"],
+                "die_with_parent": True,
+            },
+            "security": {"seccomp": {"use_tiocsti_protection": True}},
         },
         "restricted": {
             "shell": "/bin/bash",
-            "network_enabled": False,
-            "new_session": True,
-            "bind_mounts": [
-                # Minimal set of bind mounts for basic functionality
-                {"source": "/usr", "dest": "/usr", "mode": "ro"},
-                {"source": "/bin", "dest": "/bin", "mode": "ro"},
-                {"source": "/lib", "dest": "/lib", "mode": "ro"},
-                {"source": "/lib64", "dest": "/lib64", "mode": "ro"},
-            ],
-            "clear_env": True,
-            "die_with_parent": True,
-            "disable_userns": True,
-            "unshare_cgroup": True,
-            "use_tiocsti_protection": True,
+            "namespaces": {
+                "unshare_all": True,
+                "network": False,  # Disable network in restricted mode
+                "user": True,
+                "ipc": True,
+                "pid": True,
+                "uts": True,
+                "cgroup": True,
+                "disable_userns": True,
+            },
+            "filesystem": {
+                "system_mounts": True,
+                "system_ro": True,
+                "dev_mounts": ["/dev"],
+                "proc_mounts": ["/proc"],
+                "tmpfs_mounts": [
+                    {"dest": "/tmp", "mode": 0o1777},
+                    {"dest": "/run", "mode": 0o755},
+                ],
+            },
+            "environment": {
+                "clear_env": True,
+                "preserve_vars": ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"],
+                "die_with_parent": True,
+                "new_session": True,  # Better security in restricted mode
+            },
+            "security": {
+                "capabilities": {
+                    "drop_all": True  # Drop all capabilities in restricted mode
+                },
+                "seccomp": {"use_tiocsti_protection": True},
+            },
         },
     }
 }
 
 DEFAULT_LOCAL_CONFIG = {
-    "sandbox": {  # Wrap in a table/section
-        "profile": "default"
+    "sandbox": {
+        "profile": "default",
+        # Other settings can be added here to override the profile
     }
 }
 
@@ -88,19 +126,28 @@ class BindMount:
 
 
 @dataclass
+class TmpfsMount:
+    """Configuration for tmpfs mounts"""
+
+    dest: str
+    size: int | None = None  # Size in bytes
+    mode: int | None = None  # Octal permissions
+
+
+@dataclass
+class OverlayMount:
+    """Configuration for overlay mounts"""
+
+    dest: str  # Where to mount the overlay
+    sources: list[str] = field(default_factory=list)  # Source directories (overlay-src)
+    rw_source: str | None = None  # For writable overlays
+    work_dir: str | None = None  # Required for writable overlays
+    read_only: bool = False  # Use ro-overlay
+
+
+@dataclass
 class SeccompSyscallRule:
-    """Rule for filtering syscalls using seccomp.
-
-    Examples:
-        Block a syscall completely:
-            { syscall = "unshare" }
-
-        Block mkdir with specific permissions:
-            { syscall = "mkdir", arg_index = 1, arg_value = 0o777 }
-
-        Log all uses of a syscall:
-            { syscall = "execve", action = "log" }
-    """
+    """Rule for filtering syscalls using seccomp."""
 
     syscall: str  # Name of the syscall to filter
     action: str = "block"  # "block", "allow", "log", "trace"
@@ -123,39 +170,103 @@ class SeccompSyscallRule:
 
 
 @dataclass
-class SandboxConfig:
-    """Core configuration class for sandbox settings.
+class NamespaceConfig:
+    """Configuration for Linux namespaces."""
 
-    All fields are optional with sensible defaults. The shell field is the only one
-    that must be set before the sandbox is created, but this is validated at merge time.
-    """
+    unshare_all: bool = False
+    user: bool = True
+    ipc: bool = True
+    pid: bool = True
+    network: bool = False  # Default to isolated network
+    uts: bool = True
+    cgroup: bool = True
+    disable_userns: bool = False
+    uid: int | None = None
+    gid: int | None = None
+    hostname: str | None = None
+
+
+@dataclass
+class FilesystemConfig:
+    """Configuration for filesystem setup."""
+
+    bind_mounts: list[BindMount] = field(default_factory=list)
+    dev_mounts: list[str] = field(default_factory=lambda: ["/dev"])
+    proc_mounts: list[str] = field(default_factory=lambda: ["/proc"])
+    tmpfs_mounts: list[TmpfsMount] = field(
+        default_factory=lambda: [TmpfsMount(dest="/tmp", mode=0o1777)]
+    )
+    mqueue_mounts: list[str] = field(default_factory=list)
+    overlay_mounts: list[OverlayMount] = field(default_factory=list)
+    system_mounts: bool = True  # Enable standard system mounts
+    system_ro: bool = True  # Mount system directories as read-only
+
+
+@dataclass
+class EnvironmentConfig:
+    """Configuration for environment variables and process settings."""
+
+    clear_env: bool = True
+    preserve_vars: list[str] = field(
+        default_factory=lambda: ["TERM", "COLORTERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]
+    )
+    set_vars: dict[str, str] = field(default_factory=dict)
+    unset_vars: list[str] = field(default_factory=list)
+    new_session: bool = False
+    die_with_parent: bool = True
+    as_pid_1: bool = False
+
+
+@dataclass
+class CapabilityConfig:
+    """Configuration for Linux capabilities."""
+
+    add: list[str] = field(default_factory=list)
+    drop: list[str] = field(default_factory=list)
+    drop_all: bool = False
+
+
+@dataclass
+class SeccompConfig:
+    """Configuration for seccomp filters."""
+
+    syscall_rules: list[SeccompSyscallRule] = field(default_factory=list)
+    custom_filter_path: str | None = None
+    use_tiocsti_protection: bool = True
+
+
+@dataclass
+class SELinuxConfig:
+    """Configuration for SELinux contexts."""
+
+    exec_label: str | None = None
+    file_label: str | None = None
+
+
+@dataclass
+class SecurityConfig:
+    """Configuration for security settings."""
+
+    capabilities: CapabilityConfig = field(default_factory=CapabilityConfig)
+    seccomp: SeccompConfig = field(default_factory=SeccompConfig)
+    selinux: SELinuxConfig = field(default_factory=SELinuxConfig)
+
+
+@dataclass
+class SandboxConfig:
+    """Sandbox configuration with a more logical structure."""
 
     profile: str | None = None
-    shell: str | None = None
-    bind_mounts: list[BindMount] = field(default_factory=list)
-    new_session: bool = False  # Set to true for better security but may have TTY issues
-    die_with_parent: bool = True  # Kill sandbox when parent process dies
-    network_enabled: bool = True  # By default we enable network
-    disable_userns: bool = True  # Prevent creation of new user namespaces (security)
-    clear_env: bool = True  # Start with clean environment
-    sandbox_uid: int | None = None  # Custom UID in sandbox (None = keep current)
-    sandbox_gid: int | None = None  # Custom GID in sandbox (None = keep current)
-    hostname: str | None = None  # Custom hostname in sandbox
-    unshare_cgroup: bool = True  # Use cgroup namespace isolation
-    use_tiocsti_protection: bool = True  # Whether to protect against TIOCSTI
-    seccomp_syscall_rules: list[SeccompSyscallRule] = field(
-        default_factory=list
-    )  # Rules for filtering syscalls
-    custom_seccomp_filter: str | None = None  # Path to a pre-compiled seccomp BPF filter file
+    shell: str = "/bin/bash"
+    namespaces: NamespaceConfig = field(default_factory=NamespaceConfig)
+    filesystem: FilesystemConfig = field(default_factory=FilesystemConfig)
+    environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
 
 
 @dataclass
 class GlobalConfig:
-    """Global configuration that includes default settings and profiles.
-
-    The default_config contains settings that apply to all sandboxes when not overridden.
-    The profiles contains named configurations that can be referenced by local configs.
-    """
+    """Global configuration that includes default settings and profiles."""
 
     default_config: SandboxConfig = field(default_factory=SandboxConfig)
     profiles: dict[str, SandboxConfig] = field(default_factory=dict)
@@ -165,23 +276,15 @@ class GlobalConfig:
 class FinalizedSandboxConfig:
     """Configuration with guaranteed non-optional values after merging."""
 
+    # Basic settings
     shell: str  # Shell is required and validated during merging
-    profile: str | None = None  # Profile remains optional
-    bind_mounts: list[BindMount] = field(default_factory=list)
-    new_session: bool = False
-    die_with_parent: bool = True
-    network_enabled: bool = True
-    disable_userns: bool = True
-    clear_env: bool = True
-    sandbox_uid: int | None = None
-    sandbox_gid: int | None = None
-    hostname: str | None = None
-    unshare_cgroup: bool = True
-    use_tiocsti_protection: bool = True
-    seccomp_syscall_rules: list[SeccompSyscallRule] = field(default_factory=list)
-    custom_seccomp_filter: str | None = None
-    seccomp_filter_path: str | None = None  # Add this field
-    seccomp_rules: list[SeccompSyscallRule] = field(default_factory=list)  # Add this field
+    profile: str | None = None
+
+    # Configuration objects
+    namespaces: NamespaceConfig = field(default_factory=NamespaceConfig)
+    filesystem: FilesystemConfig = field(default_factory=FilesystemConfig)
+    environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
 
 
 def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
@@ -195,16 +298,45 @@ def parse_dataclass_from_dict(cls: type[T], data: dict[str, Any]) -> T:
             continue
 
         value = data[f.name]
+        field_type = f.type
 
-        # Handle nested dataclasses like BindMount
-        if f.name == "bind_mounts" and isinstance(value, list):
-            kwargs[f.name] = [BindMount(**item) for item in value]
-        elif f.name == "seccomp_syscall_rules" and isinstance(value, list):
-            kwargs[f.name] = [SeccompSyscallRule(**item) for item in value]
+        # Handle nested dataclasses
+        if isinstance(value, dict):
+            # Check if field_type is actually a dataclass type
+            if is_dataclass(field_type):
+                if not isinstance(field_type, type):
+                    field_type = type(field_type)
+                # Use cast to satisfy the type checker
+                kwargs[f.name] = parse_dataclass_from_dict(cast(type[T], field_type), value)
+            else:
+                kwargs[f.name] = value
+        # Handle lists
+        elif isinstance(value, list):
+            origin = get_origin(field_type)
+            args = get_args(field_type)
+
+            if origin is list and args and len(args) > 0:
+                item_type = args[0]
+                # Check if item_type is a dataclass and the values are dictionaries
+                if is_dataclass(item_type) and all(isinstance(item, dict) for item in value):
+                    parsed_items = []
+                    for item in value:
+                        # Ensure item_type is a class, not an instance
+                        if not isinstance(item_type, type):
+                            item_type = type(item_type)
+                        # Use cast to satisfy the type checker
+                        parsed_items.append(
+                            parse_dataclass_from_dict(cast(type[T], item_type), item)
+                        )
+                    kwargs[f.name] = parsed_items
+                else:
+                    kwargs[f.name] = value
+            else:
+                kwargs[f.name] = value
         else:
             kwargs[f.name] = value
 
-    return cls(**kwargs)  # Remove cast since T is properly bound now
+    return cls(**kwargs)
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -277,74 +409,96 @@ def load_global_config() -> GlobalConfig:
 
 
 def finalize_config(config: SandboxConfig) -> FinalizedSandboxConfig:
-    """Convert a merged SandboxConfig to a FinalizedSandboxConfig.
-
-    This function performs runtime validation to ensure all required
-    fields are present, then converts to the finalized type.
-    """
-    if config.shell is None:
+    """Convert a merged SandboxConfig to a FinalizedSandboxConfig."""
+    if not config.shell:
         fail("Shell must be specified in the configuration")
 
     return FinalizedSandboxConfig(
-        shell=config.shell,  # We know this is not None due to validation
+        # Basic settings
+        shell=config.shell,
         profile=config.profile,
-        bind_mounts=config.bind_mounts,
-        new_session=config.new_session,
-        die_with_parent=config.die_with_parent,
-        network_enabled=config.network_enabled,
-        disable_userns=config.disable_userns,
-        clear_env=config.clear_env,
-        sandbox_uid=config.sandbox_uid,
-        sandbox_gid=config.sandbox_gid,
-        hostname=config.hostname,
-        unshare_cgroup=config.unshare_cgroup,
-        use_tiocsti_protection=config.use_tiocsti_protection,
-        seccomp_syscall_rules=config.seccomp_syscall_rules,
-        custom_seccomp_filter=config.custom_seccomp_filter,
+        # Configuration objects
+        namespaces=config.namespaces,
+        filesystem=config.filesystem,
+        environment=config.environment,
+        security=config.security,
     )
 
 
 def merge_configs(local: SandboxConfig, global_conf: GlobalConfig) -> FinalizedSandboxConfig:
-    """Merge configurations with precedence: local > profile.
-
-    Returns a fully merged FinalizedSandboxConfig with all necessary settings for running a sandbox.
-    """
-    # Start with the default profile if no profile is specified
+    """Merge configurations with precedence: local > profile."""
     profile_name = local.profile or "default"
 
-    # Check if the profile exists
     if profile_name not in global_conf.profiles:
         fail(f"Profile '{profile_name}' not found in global config.")
 
     # Start with the specified profile
     profile = global_conf.profiles[profile_name]
-    merged = SandboxConfig(**{f.name: getattr(profile, f.name) for f in fields(profile)})
-    merged.profile = profile_name
+    merged = SandboxConfig(
+        profile=profile_name,
+        shell=local.shell or profile.shell,
+        namespaces=NamespaceConfig(
+            **{
+                f.name: getattr(local.namespaces, f.name) or getattr(profile.namespaces, f.name)
+                for f in fields(NamespaceConfig)
+            }
+        ),
+        filesystem=FilesystemConfig(
+            **{
+                f.name: getattr(local.filesystem, f.name) or getattr(profile.filesystem, f.name)
+                for f in fields(FilesystemConfig)
+            }
+        ),
+        environment=EnvironmentConfig(
+            **{
+                f.name: getattr(local.environment, f.name) or getattr(profile.environment, f.name)
+                for f in fields(EnvironmentConfig)
+            }
+        ),
+        security=SecurityConfig(
+            capabilities=CapabilityConfig(
+                **{
+                    f.name: getattr(local.security.capabilities, f.name)
+                    or getattr(profile.security.capabilities, f.name)
+                    for f in fields(CapabilityConfig)
+                }
+            ),
+            seccomp=SeccompConfig(
+                **{
+                    f.name: getattr(local.security.seccomp, f.name)
+                    or getattr(profile.security.seccomp, f.name)
+                    for f in fields(SeccompConfig)
+                }
+            ),
+            selinux=SELinuxConfig(
+                **{
+                    f.name: getattr(local.security.selinux, f.name)
+                    or getattr(profile.security.selinux, f.name)
+                    for f in fields(SELinuxConfig)
+                }
+            ),
+        ),
+    )
 
-    # Apply local settings, only if they're not the default values
-    for f in fields(local):
-        if f.name == "profile":
-            continue  # We've already handled the profile
+    # Special handling for list and dict fields
+    # Filesystem lists
+    merged.filesystem.bind_mounts.extend(local.filesystem.bind_mounts)
+    merged.filesystem.dev_mounts.extend(local.filesystem.dev_mounts)
+    merged.filesystem.proc_mounts.extend(local.filesystem.proc_mounts)
+    merged.filesystem.tmpfs_mounts.extend(local.filesystem.tmpfs_mounts)
+    merged.filesystem.mqueue_mounts.extend(local.filesystem.mqueue_mounts)
+    merged.filesystem.overlay_mounts.extend(local.filesystem.overlay_mounts)
 
-        value = getattr(local, f.name)
-        default_value = getattr(SandboxConfig(), f.name)
+    # Environment variables
+    merged.environment.set_vars.update(local.environment.set_vars)
+    merged.environment.unset_vars.extend(local.environment.unset_vars)
+    merged.environment.preserve_vars.extend(local.environment.preserve_vars)
 
-        # Skip field if it's a default value (not explicitly set in local config)
-        if value != default_value:
-            if f.name == "bind_mounts":
-                # Special handling for bind_mounts: we append rather than replace
-                setattr(merged, f.name, getattr(merged, f.name) + value)
-            elif f.name == "seccomp_syscall_rules":
-                # Special handling for seccomp rules: append rather than replace
-                setattr(merged, f.name, getattr(merged, f.name) + value)
-            else:
-                setattr(merged, f.name, value)
+    # Security lists
+    merged.security.capabilities.add.extend(local.security.capabilities.add)
+    merged.security.capabilities.drop.extend(local.security.capabilities.drop)
+    merged.security.seccomp.syscall_rules.extend(local.security.seccomp.syscall_rules)
 
-    # Validate required fields
-    if not merged.shell:
-        fail("No shell specified in profile or local config.")
-
-    # Convert to finalized config with non-optional fields
     return finalize_config(merged)
 
 
